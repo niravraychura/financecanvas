@@ -1,0 +1,31 @@
+name: Agent Skill Install
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  install:
+    runs-on: ubuntu-latest
+    env:
+      DISABLE_TELEMETRY: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Validate Agent Skills discovery
+        run: npx -y skills add . --list
+      - name: Install into Claude Code, Cursor and Codex layouts
+        env:
+          HOME: ${{ runner.temp }}/financecanvas-home
+        run: |
+          mkdir -p "$HOME"
+          npx -y skills add . -g -a claude-code -a cursor -a codex --copy -y
+          test -f "$HOME/.claude/skills/financecanvas/SKILL.md"
+          test -f "$HOME/.cursor/skills/financecanvas/SKILL.md"
+          test -f "$HOME/.codex/skills/financecanvas/SKILL.md"
