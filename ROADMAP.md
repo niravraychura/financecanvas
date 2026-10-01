@@ -13,6 +13,13 @@ This file lists items intentionally **not** treated as complete in v0.1 because 
 - two-step full workspace erasure
 - JSON and CSV exports
 - Watch rules/findings
+- historical-balance queries with running-balance/anchor evidence
+- automatic recurring-pattern discovery
+- subscription-change/reappearance and spending-anomaly detection
+- EMI, annual-fee, reconciliation and allocation-drift Watch rules
+- persistent financial preferences and recommendation history
+- evidence-aware answers, financial timeline and ownership graph
+- source-document SHA-256 duplicate checks
 - data-freshness checks
 - scoped external API keys
 - owner/developer connector-first maintenance
