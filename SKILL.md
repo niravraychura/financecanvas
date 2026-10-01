@@ -104,6 +104,15 @@ Every FinanceCanvas code, schema, Skill, API, dependency, security, privacy, or 
 
 ## First initialization
 
+Installation of the Skill itself should be simple. Do not make the user manually clone the repository or copy Skill files when the host already discovered FinanceCanvas.
+
+Before the first database-backed task:
+1. Detect whether an authorized Supabase connector or configured FinanceCanvas API is already available.
+2. If the FinanceCanvas schema/API is already installed, call `initialization_status` and continue.
+3. If persistent mode is requested, an authorized owner/developer Supabase connector is available, and the FinanceCanvas schema is missing, ask one concise confirmation to initialize the FinanceCanvas data layer. After confirmation, use the bundled migrations/functions through the authorized connector; do not ask the user to paste admin credentials or create a duplicate local secret.
+4. If no authorized persistent backend exists, explain that the Skill is installed but persistent storage is not configured. Do not pretend that data will persist. The user may continue with non-persistent analysis or follow `ADVANCED_SETUP.md`.
+5. After any automatic backend installation/change, run the FinanceCanvas security checks required by `SECURITY_CHECKLIST.md`.
+
 Call `initialization_status` before the first database-backed task.
 
 Establish the deployment context before first persistent use:
