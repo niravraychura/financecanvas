@@ -15,6 +15,11 @@ Initial FinanceCanvas release:
 - Account balance history and credit-card statement metadata
 - Budgets, recurring items and financial snapshots
 - Expanded Watch checks for due dates, utilization, renewals, goals, budgets, recurring items, concentration, refunds and cash flow
+- Added historical balance reconstruction with statement running balances and source sequence
+- Added recurring-pattern discovery and source-document SHA-256 duplicate checks
+- Added subscription change/reappearance, spending anomaly, EMI, annual fee, reconciliation and allocation-drift alerts
+- Added persistent financial preferences and recommendation history
+- Added evidence bundles, financial timeline and ownership graph
 - Cross-workspace reference validation on controlled writes
 - structured-data-only persistence
 - exact and near-duplicate protection
