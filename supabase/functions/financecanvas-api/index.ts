@@ -125,6 +125,33 @@ function rowsToCsv(rows:any[]){
   const headers=[...new Set(rows.flatMap(r=>Object.keys(r)))];
   return headers.map(csvEscape).join(",")+"\n"+rows.map(r=>headers.map(h=>csvEscape(r[h])).join(",")).join("\n");
 }
+async function assertIdsInWorkspace(db:any,table:string,ids:any[],workspaceId:string){
+  const unique=[...new Set(ids.filter(Boolean).map(String))];
+  if(!unique.length)return;
+  const {data,error}=await db.from(table).select("id").eq("workspace_id",workspaceId).in("id",unique);
+  if(error)throw error;
+  const found=new Set((data??[]).map((x:any)=>String(x.id)));
+  const missing=unique.filter(id=>!found.has(id));
+  if(missing.length)throw Object.assign(new Error("Referenced "+table+" record does not belong to this workspace"),{status:403,code:"CROSS_WORKSPACE_REFERENCE"});
+}
+async function validateGenericRefs(db:any,table:string,row:any,ws:string){
+  const one=async(t:string,id:any)=>assertIdsInWorkspace(db,t,[id],ws);
+  if(table==="transaction_splits"){await one("transactions",row.transaction_id);await one("profiles",row.profile_id);}
+  if(table==="loans"){await one("profiles",row.profile_id);await one("institutions",row.institution_id);}
+  if(table==="loan_payments"){await one("loans",row.loan_id);await one("transactions",row.transaction_id);}
+  if(table==="insurance_policies"){await one("profiles",row.profile_id);await one("institutions",row.institution_id);}
+  if(["assets","liabilities","subscriptions","goals","processing_consents","privacy_requests","sensitive_data_events","budgets","financial_snapshots"].includes(table))await one("profiles",row.profile_id);
+  if(table==="investments"){await one("profiles",row.profile_id);await one("accounts",row.account_id);}
+  if(table==="investment_transactions"){await one("investments",row.investment_id);await one("transactions",row.transaction_id);}
+  if(table==="data_freshness")await one("accounts",row.account_id);
+  if(table==="household_members"){await one("households",row.household_id);await one("profiles",row.profile_id);}
+  if(table==="profile_relationships"){await assertIdsInWorkspace(db,"profiles",[row.profile_id,row.related_profile_id],ws);}
+  if(table==="asset_owners"){await one("assets",row.asset_id);await one("profiles",row.profile_id);}
+  if(table==="liability_owners"){await one("liabilities",row.liability_id);await one("profiles",row.profile_id);}
+  if(table==="loan_borrowers"){await one("loans",row.loan_id);await one("profiles",row.profile_id);}
+  if(["account_balances","credit_card_statements"].includes(table)){await one("accounts",row.account_id);await one("imports",row.import_id);}
+  if(table==="recurring_items"){await one("profiles",row.profile_id);await one("accounts",row.account_id);}
+}
 async function nearMatches(db:any, ws:string, t:Record<string,any>) {
   const d=new Date(t.posted_date+"T00:00:00Z"), lo=new Date(d), hi=new Date(d);
   lo.setUTCDate(lo.getUTCDate()-3); hi.setUTCDate(hi.getUTCDate()+3);
@@ -199,6 +226,7 @@ Deno.serve(async(req:Request)=>{
     if(op==="create_account"){
       reqFields(p,["workspace_id","name","account_type"]);
       if(p.identifier_last4 && !/^\d{1,4}$/.test(String(p.identifier_last4))) throw new Error("identifier_last4 must contain at most the final 4 digits");
+      await assertIdsInWorkspace(db,"institutions",[p.institution_id],p.workspace_id);
       const row={workspace_id:p.workspace_id,institution_id:p.institution_id??null,name:p.name,account_type:p.account_type,currency:String(p.currency??"INR").toUpperCase(),identifier_last4:p.identifier_last4??null,current_balance:p.current_balance??null,balance_as_of:p.balance_as_of??null,credit_limit:p.credit_limit??null,annual_fee:p.annual_fee??null,annual_fee_waiver_spend:p.annual_fee_waiver_spend??null,metadata:sanitizeValue(p.metadata??{})};
       const {data,error}=await db.from("accounts").insert(row).select().single();if(error)throw error;
       await db.from("audit_log").insert({workspace_id:p.workspace_id,action:"create_account",target_table:"accounts",target_id:data.id,after_snapshot:auditSafe(data)});
@@ -215,6 +243,7 @@ Deno.serve(async(req:Request)=>{
         const pr=await db.from("profiles").select("id").eq("id",clean.profile_id).eq("workspace_id",p.workspace_id).single(); if(pr.error) throw pr.error;
       } else {
         clean.workspace_id=p.workspace_id;
+        await validateGenericRefs(db,String(p.table),clean,p.workspace_id);
       }
       const r=await db.from(String(p.table)).insert(clean).select().single(); if(r.error) throw r.error;
       await db.from("audit_log").insert({workspace_id:p.workspace_id,action:"create_"+p.table,target_table:p.table,target_id:r.data.id??null,after_snapshot:auditSafe(r.data)});
@@ -234,7 +263,11 @@ Deno.serve(async(req:Request)=>{
     }
     if(op==="preview_transaction_import"){
       reqFields(p,["workspace_id","transactions"]);const results=[];
-      for(const src of p.transactions as Record<string,any>[]){
+      const previewRows=p.transactions as Record<string,any>[];
+      await assertIdsInWorkspace(db,"accounts",previewRows.map(x=>x.account_id),p.workspace_id);
+      await assertIdsInWorkspace(db,"profiles",previewRows.map(x=>x.profile_id),p.workspace_id);
+      await assertIdsInWorkspace(db,"imports",previewRows.map(x=>x.import_id),p.workspace_id);
+      for(const src of previewRows){
         const t={...src,workspace_id:p.workspace_id};reqFields(t,["account_id","posted_date","amount","direction"]);const base=await fp(t);
         const ex=await db.from("transactions").select("*").eq("workspace_id",p.workspace_id).eq("base_fingerprint",base).is("deleted_at",null).limit(1);if(ex.error)throw ex.error;
         if(ex.data?.length){results.push({client_id:src.client_id??null,status:"exact_duplicate",base_fingerprint:base,existing:ex.data[0],difference:differences(ex.data[0],t)});continue}
@@ -248,8 +281,12 @@ Deno.serve(async(req:Request)=>{
       reqFields(p,["workspace_id","transactions","final_confirmation"]);
       if(p.final_confirmation!==true)return respond({error:"Final user confirmation is required before commit."},409);
       const resolutions=new Map((p.duplicate_resolutions??[]).map((r:any)=>[String(r.client_id),r]));
+      const commitRows=p.transactions as Record<string,any>[];
+      await assertIdsInWorkspace(db,"accounts",commitRows.map(x=>x.account_id),p.workspace_id);
+      await assertIdsInWorkspace(db,"profiles",commitRows.map(x=>x.profile_id),p.workspace_id);
+      await assertIdsInWorkspace(db,"imports",commitRows.map(x=>x.import_id),p.workspace_id);
       const inserted=[],skipped=[],conflicts=[];
-      for(const src of p.transactions as Record<string,any>[]){
+      for(const src of commitRows){
         const t={...src,workspace_id:p.workspace_id}, client=String(src.client_id??"");reqFields(t,["account_id","posted_date","amount","direction"]);
         const base=await fp(t), ex=await db.from("transactions").select("*").eq("workspace_id",p.workspace_id).eq("base_fingerprint",base).is("deleted_at",null).limit(1);if(ex.error)throw ex.error;
         let fingerprint=base, duplicateOf=null, overrideReason=null;
@@ -348,7 +385,7 @@ Deno.serve(async(req:Request)=>{
       return respond({assets:a.data??[],liabilities:l.data??[],accounts:ac.data??[],transactions:t.data??[],budgets:bg.data??[],recurring_items:ri.data??[],financial_snapshots:sn.data??[],note:"Calculate totals deterministically and do not combine currencies without an explicit FX source."});
     }
     if(op==="create_watch_rule"){
-      reqFields(p,["workspace_id","name","rule_type"]);const row={workspace_id:p.workspace_id,profile_id:p.profile_id??null,name:p.name,rule_type:p.rule_type,cadence:p.cadence??null,severity:p.severity??"notice",configuration:p.configuration??{},enabled:p.enabled??true};
+      reqFields(p,["workspace_id","name","rule_type"]);await assertIdsInWorkspace(db,"profiles",[p.profile_id],p.workspace_id);const row={workspace_id:p.workspace_id,profile_id:p.profile_id??null,name:p.name,rule_type:p.rule_type,cadence:p.cadence??null,severity:p.severity??"notice",configuration:p.configuration??{},enabled:p.enabled??true};
       const r=await db.from("watch_rules").insert(row).select().single();if(r.error)throw r.error;await db.from("audit_log").insert({workspace_id:p.workspace_id,action:"create_watch_rule",target_table:"watch_rules",target_id:r.data.id,after_snapshot:auditSafe(r.data)});return respond({watch_rule:r.data});
     }
     if(op==="list_watch_rules"){
