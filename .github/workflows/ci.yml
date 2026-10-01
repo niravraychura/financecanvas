@@ -17,6 +17,8 @@ jobs:
           python-version: '3.12'
       - name: Run tests
         run: python -m unittest discover -s tests -v
+      - name: Run FinanceCanvas security gate
+        run: python scripts/security_check.py
       - name: Reject common committed secret/data files
         shell: bash
         run: |
