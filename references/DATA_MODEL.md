@@ -20,6 +20,7 @@ Do not assume a login identity is the same thing as a financial profile.
 - account_owners
 - account_balances
 - credit_card_statements
+- transaction running balances/order via transactions.balance_after/source_sequence
 
 Account/card identifiers are masked/final-four only.
 
@@ -44,6 +45,7 @@ Source files are temporary inputs and are not intentionally persisted by Finance
 - liabilities
 - liability_owners
 - insurance_policies
+- insurance_premiums
 
 ## Assets and investments
 
@@ -59,6 +61,7 @@ Ownership percentages can represent joint assets/liabilities/loans.
 
 - goals
 - budgets
+- income_sources
 - subscriptions
 - recurring_items
 
@@ -67,6 +70,7 @@ Ownership percentages can represent joint assets/liabilities/loans.
 - watch_rules
 - watch_findings
 - data_freshness
+- investment_allocation_targets
 
 ## Change safety and privacy
 
@@ -78,6 +82,8 @@ Ownership percentages can represent joint assets/liabilities/loans.
 - security_events
 - breach_incidents
 - financecanvas_compliance_settings
+- financial_preferences
+- recommendations
 
 ## Workspace invariant
 
