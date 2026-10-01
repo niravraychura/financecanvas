@@ -32,6 +32,7 @@ REQUIRED_FILES = {
     "ACCEPTANCE_TEST.md",
     "scripts/generate_api_key.py",
     "scripts/acceptance_test.py",
+    ".github/workflows/acceptance.yml",
     "references/CALCULATION_RULES.md",
     "references/CATEGORIZATION_RULES.md",
     "references/IMPORT_RULES.md",
