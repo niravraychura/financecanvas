@@ -88,3 +88,21 @@ A release is not considered fully acceptance-tested unless:
 - Edge Function is ACTIVE;
 - HTTP acceptance script passes from a networked environment;
 - no synthetic test data or temporary keys remain afterward.
+
+
+## GitHub Actions
+
+A manual workflow is available at:
+
+`.github/workflows/acceptance.yml`
+
+Before running it:
+
+1. create a temporary unscoped FinanceCanvas bootstrap key with `admin,read,write,watch,export` scopes;
+2. store the plaintext value as the repository secret `FINANCECANVAS_BOOTSTRAP_API_KEY`;
+3. manually run **Acceptance Test** and provide the Edge Function URL;
+4. verify the workflow passes;
+5. revoke/delete the bootstrap key immediately afterward;
+6. remove the repository secret if it is no longer needed.
+
+Never commit the bootstrap key or place it in workflow YAML.
