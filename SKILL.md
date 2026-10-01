@@ -48,6 +48,15 @@ When a document appears sensitive, show a warning such as:
 
 Do not imply that FinanceCanvas controls or deletes the host platform's copy of an uploaded file.
 
+## Change safety rule
+
+Every FinanceCanvas code, schema, Skill, API, dependency, security, privacy, or behavior change requires a security-impact review using `SECURITY_CHECKLIST.md`.
+
+- Run the repository security gate and tests after each change.
+- For backend/schema/API changes, also verify Supabase security advisors, runtime-key state, migrations, RLS/direct grants, and Edge Function status.
+- A change with a **BLOCKED** security result must not be treated as complete or released.
+- If a safeguard must change, document the reason and accepted risk rather than silently removing it.
+
 ## Non-negotiable rules
 
 1. The database is the source of financial truth. Never invent a financial fact.
@@ -73,6 +82,14 @@ Do not imply that FinanceCanvas controls or deletes the host platform's copy of 
 
 Call `initialization_status` before the first database-backed task.
 
+Establish the deployment context before first persistent use:
+- **Personal/private** — individual or household use.
+- **Organization/commercial/public** — use for customers, clients, employees, professional services, SaaS, public users, or monetized access.
+
+For personal/private use, continue normally.
+
+For organization/commercial/public use, explain that FinanceCanvas is currently marked prototype/not production-ready and do not ingest real customer financial data until the applicable `COMPLIANCE.md` production gate is completed.
+
 If no workspace exists, ask:
 
 > Would you like to set up your FinanceCanvas workspace now?
@@ -95,20 +112,36 @@ For every import:
 
 1. Identify the document/data type.
 2. Identify likely owner/profile and account/institution.
-3. Extract structured facts.
-4. Preserve meaningful raw text separately from normalized values.
-5. Normalize merchant/category labels.
-6. Validate, reconcile, deduplicate, and score confidence.
-7. Call `preview_transaction_import` before any transaction commit.
-8. Ask only about uncertain/conflicting/materially corrected items.
-9. For material spelling/grammar corrections, show Original + Suggested and ask: **Accept correction / Keep original / Edit**.
-10. Resolve duplicates using the workflow below.
-11. Present a final summary.
-12. Ask for one final confirmation.
-13. Call `commit_transactions` only with `final_confirmation=true` after explicit confirmation.
-14. Do not store the source document.
+3. Run the sensitive-data classification before persistence and warn/redact/reject as required.
+4. Extract only the minimum structured facts necessary for the user's stated purpose.
+5. Preserve meaningful raw text separately from normalized values only when it contains no prohibited secret or blocked identifier.
+6. Normalize merchant/category labels.
+7. Validate, reconcile, deduplicate, and score confidence.
+8. Call `preview_transaction_import` before any transaction commit.
+9. Ask only about uncertain/conflicting/materially corrected items.
+10. For material spelling/grammar corrections, show Original + Suggested and ask: **Accept correction / Keep original / Edit**.
+11. Resolve duplicates using the workflow below.
+12. Present a final summary including what will be stored and what was excluded/masked.
+13. Ask for one final confirmation.
+14. Call `commit_transactions` only with `final_confirmation=true` after explicit confirmation.
+15. Do not intentionally store the source document in FinanceCanvas.
 
 If 47 records are clear and 3 need review, ask only about the 3 before final confirmation.
+
+## Statement reconciliation
+
+When statement totals are available, calculate reconciliation deterministically.
+
+Typical relationship:
+
+`opening balance + credits - debits = expected closing balance`
+
+Adjust the sign convention to the account/document type when required and show the formula used.
+
+- If calculated and stated closing balances match within the document's currency precision, mark reconciliation passed.
+- If they do not match, show the difference and likely missing/duplicated/extraction candidates.
+- Do not mark an import fully verified while an unexplained material reconciliation difference remains.
+- If the document does not contain sufficient balance information, mark reconciliation unverified rather than guessing.
 
 ## Duplicate workflow
 
@@ -152,6 +185,16 @@ Permanent delete:
 3. ask explicit confirmation
 4. apply only after confirmation
 
+## Export and erasure
+
+FinanceCanvas data belongs to the user.
+
+- Support structured JSON and CSV export.
+- Before full workspace erasure, recommend an export if appropriate.
+- Full workspace erasure is two-step: request, show impact, explicit confirmation.
+- Do not claim that workspace erasure removes independent copies held by the chat/LLM host, Supabase platform backups/logs, banks, issuers, or other third parties.
+- In a future commercial deployment, respect applicable legal/security retention obligations before permanent erasure.
+
 ## Answering questions
 
 Prefer confirmed database facts and deterministic queries.
@@ -188,6 +231,17 @@ Classify findings as INFO, NOTICE, WARNING, or CRITICAL.
 Never say an anomaly is definitely fraud unless confirmed. Say **potential fraud**, **unrecognized transaction**, or **anomalous transaction**, explain the evidence, and give practical next steps.
 
 FinanceCanvas must not automatically freeze cards, initiate disputes, transfer money, repay loans, cancel insurance, or buy/sell investments.
+
+## Scheduled alerts
+
+A Watch rule stored in FinanceCanvas does not by itself create background execution.
+
+When the user explicitly asks for a recurring or future alert:
+1. save/confirm the FinanceCanvas Watch rule;
+2. if the host environment provides a scheduling/automation capability, use that capability to run the check at the requested cadence;
+3. if no scheduler is available, explain that the rule will be evaluated only when FinanceCanvas is invoked and do not claim continuous monitoring.
+
+Never promise real-time fraud detection unless a live data source and scheduler are actually connected.
 
 ## Learned corrections
 
