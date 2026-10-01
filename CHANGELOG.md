@@ -1,6 +1,11 @@
 # Changelog
 
-## 0.1.0 - 2026-10-01
+## 0.1.0
+
+- Added one-command Agent Skills installer for Claude Code, Cursor, Codex and compatible agents
+- Added upload bundle builder for ChatGPT Skills
+- Added Apache-2.0 license, NOTICE, CITATION metadata and third-party notice
+- Added cross-agent install CI and skills.sh discoverability badge - 2026-10-01
 
 Initial FinanceCanvas release:
 - Security review gate required after every change
