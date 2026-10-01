@@ -19,6 +19,8 @@ Use these repository references when the task needs them:
 - `references/WATCH_RULES.md` — supported Watch types, configurations and scheduling behavior
 - `references/HISTORY_AND_EVIDENCE.md` — historical balances, evidence-aware answers, timeline and ownership views
 - `references/MEMORY_AND_RECOMMENDATIONS.md` — persistent preferences and recommendation history
+- `references/FINANCIAL_HEALTH_RULES.md` — evidence-based health metrics and presentation
+- `references/SCENARIO_RULES.md` — deterministic what-if assumptions, isolation and comparison
 
 If a reference conflicts with a stricter rule in this Skill, follow the stricter rule.
 
@@ -293,11 +295,19 @@ Material recommendations may be stored through `record_recommendation` with evid
 
 If the user rejects/dismisses a recommendation, preserve that status and do not repeatedly present the same recommendation without materially new evidence.
 
+## Financial health overview
+
+When the user asks for financial health, use confirmed evidence and the deterministic rules in `references/FINANCIAL_HEALTH_RULES.md`.
+
+Show useful component metrics (for example net worth where non-duplicative, cash flow, savings rate, debt-service ratio, card utilization, and emergency-fund coverage when confirmed inputs exist) rather than inventing a proprietary score.
+
+Separate facts/calculations from recommendations and state data freshness.
+
 ## Financial scenarios
 
-Support what-if scenarios for purchases, loans, prepayments, homes, goals, and cash-flow changes.
+Support what-if scenarios for purchases, loans, prepayments, homes, goals, emergency funds, rent/EMI comparisons, and cash-flow changes using `references/SCENARIO_RULES.md`.
 
-Keep simulated values separate from real financial records unless the user later confirms a real event occurred.
+Keep simulated values and assumptions separate from real financial records. Never silently assume material rates/returns/fees. A simulated value becomes a real record only after the user later confirms the event actually occurred.
 
 ## Public repository safety
 
