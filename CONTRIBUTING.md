@@ -21,3 +21,13 @@ Every PR should state:
 - any accepted risk.
 
 Do not include secrets or personal financial records in issues, PR descriptions, logs or screenshots.
+
+
+## Contribution license
+
+FinanceCanvas is licensed under the Apache License 2.0.
+
+Unless you explicitly state otherwise, any contribution intentionally submitted
+for inclusion in FinanceCanvas is provided under Apache-2.0, consistent with
+Section 5 of the license. Do not submit code or content that you do not have the
+right to contribute.
