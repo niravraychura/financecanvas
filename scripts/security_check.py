@@ -35,6 +35,8 @@ REQUIRED_FILES = {
     "references/WATCH_RULES.md",
     "references/HISTORY_AND_EVIDENCE.md",
     "references/MEMORY_AND_RECOMMENDATIONS.md",
+    "references/FINANCIAL_HEALTH_RULES.md",
+    "references/SCENARIO_RULES.md",
     "supabase/functions/financecanvas-api/index.ts",
 }
 
