@@ -1,26 +1,31 @@
 # FinanceCanvas Quick Start
 
-## Personal setup with an authorized Supabase connector
-
-1. Clone the repository.
-2. Load the repository's `SKILL.md` and `references/` into your AI project/Skill system.
-3. Connect/authorize the Supabase project for owner maintenance.
-4. Apply `supabase/migrations/` in filename order.
-5. Deploy `supabase/functions/financecanvas-api/index.ts`.
-6. Run the tests/security gate.
-7. Run the synthetic acceptance test.
-8. Ask FinanceCanvas to initialize your workspace.
-9. Only then begin importing real statements.
-
-No local Supabase admin `.env` is needed when the authorized connector already supplies owner access.
-
-## Required post-change check
+## Install
 
 ```bash
-python -m unittest discover -s tests -v
-python scripts/security_check.py
+npx skills add niravraychura/financecanvas --all -g
 ```
 
-For backend/schema/auth/Skill changes, also complete `SECURITY_CHECKLIST.md`.
+## Start
 
-For detailed setup, read [INSTALL.md](INSTALL.md).
+Open Claude Code, Cursor, Codex, or another Agent-Skills-compatible agent and ask:
+
+```text
+Initialize FinanceCanvas.
+```
+
+## ChatGPT web
+
+Build the upload bundle:
+
+```bash
+python scripts/package_skill.py
+```
+
+Then upload `dist/financecanvas.zip` from:
+
+```text
+Plugins → Skills → Create → Upload
+```
+
+For backend/developer details, see [ADVANCED_SETUP.md](ADVANCED_SETUP.md).
