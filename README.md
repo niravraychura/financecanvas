@@ -3,11 +3,28 @@
 **FinanceCanvas is a portable AI Personal CFO skill with a structured, user-controlled Supabase data layer.**
 
 [![CI](https://github.com/niravraychura/financecanvas/actions/workflows/ci.yml/badge.svg)](https://github.com/niravraychura/financecanvas/actions/workflows/ci.yml)
+[![skills.sh](https://skills.sh/b/niravraychura/financecanvas)](https://skills.sh/niravraychura/financecanvas)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
+[![Agent Skills](https://img.shields.io/badge/Agent%20Skills-compatible-5c6ac4)](https://agentskills.io/)
 
-FinanceCanvas is designed for individuals, couples, and households that want an AI assistant to understand long-term financial history without turning uploaded statements, receipts, screenshots, or bills into a permanent document archive.
+FinanceCanvas is an open-source **personal finance AI agent skill / personal CFO** for ChatGPT, Codex, Claude Code, Cursor and other Agent-Skills-compatible assistants. It helps individuals, couples and households analyze bank and credit-card statements, track historical balances, cash flow, budgets, loans, insurance, investments and subscriptions, and detect duplicate charges, fees and financial anomalies without turning uploaded statements into a permanent document archive.
 
 > **Status:** Personal/private v0.1 reference implementation.  
 > **Commercial/public production:** intentionally marked `production_ready = false` until the production gate in [COMPLIANCE.md](COMPLIANCE.md) is completed.
+
+## Supported AI environments
+
+FinanceCanvas follows the open Agent Skills format and is intended to be portable across compatible hosts, including:
+
+- ChatGPT Skills (upload/install through ChatGPT's Skills UI)
+- OpenAI Codex
+- Claude Code
+- Cursor
+- other Agent-Skills-compatible agents supported by the `skills` CLI
+
+The persistent data layer is optional and can use an authorized Supabase connector or the restricted FinanceCanvas API.
+
+---
 
 ## Why FinanceCanvas
 
@@ -222,117 +239,43 @@ Editing `SKILL.md` must not silently remove database/API enforcement for:
 
 ---
 
-# Installation
+## Installation
 
-For the complete setup guide, read **[INSTALL.md](INSTALL.md)**.
+### One command
 
-For the shortest setup path, read **[QUICKSTART.md](QUICKSTART.md)**.
-
-## Prerequisites
-
-- Git
-- a Supabase project
-- an AI/agent environment that can load repository/project instructions or a Skill file
-- Python 3.11+ recommended for tests/helper scripts
-- Supabase CLI optional if you prefer terminal deployment
-
-## 1. Clone the repository
+Install FinanceCanvas globally into every supported local AI agent detected on your machine:
 
 ```bash
-git clone https://github.com/niravraychura/financecanvas.git
-cd financecanvas
+npx skills add niravraychura/financecanvas --all -g
 ```
 
-## 2. Run the safety checks
-
-```bash
-python -m unittest discover -s tests -v
-python scripts/security_check.py
-```
-
-Do not continue if either command fails.
-
-## 3. Install/load the Skill
-
-Do **not** copy only `SKILL.md`.
-
-Keep the Skill and references together:
+Then open Claude Code, Cursor, Codex, or another Agent-Skills-compatible agent and say:
 
 ```text
-financecanvas/
-├── SKILL.md
-├── references/
-├── SECURITY.md
-├── SECURITY_CHECKLIST.md
-└── AGENTS.md
+Initialize FinanceCanvas.
 ```
 
-If your AI host supports repository/project instructions, add the repository to that project and instruct it to use `SKILL.md`.
+That's the normal installation path. No repository clone is required just to install the Skill.
 
-If your host supports a Skills directory, copy or link the **whole FinanceCanvas directory** into that host's supported Skills location so the relative `references/` files remain available.
+The open `skills` CLI installs Agent Skills from GitHub and supports Claude Code, Cursor, Codex and many other agents.
 
-The exact Skills-directory path is host-specific; use the current documentation for your AI host.
+### ChatGPT web
 
-## 4. Deploy Supabase
+ChatGPT currently installs uploaded Skills through its Skills UI rather than a local shell command.
 
-### Connector-first owner setup
-
-If your AI host already has an explicitly authorized Supabase connector:
-
-- use it for owner/developer maintenance;
-- apply every migration under `supabase/migrations/` in filename order;
-- do **not** create a local Supabase-admin `.env` merely to duplicate existing connector credentials;
-- never paste the connector's credentials into chat or GitHub.
-
-### Supabase CLI setup
+Build the upload bundle:
 
 ```bash
-supabase link --project-ref YOUR_PROJECT_REF
-supabase db push
-supabase functions deploy financecanvas-api --no-verify-jwt
+python scripts/package_skill.py
 ```
 
-`--no-verify-jwt` is intentional because `financecanvas-api` implements its own FinanceCanvas runtime-key authentication.
-
-Do not put a Supabase server/service-role secret into the Skill or client.
-
-## 5. External-client runtime access
-
-You do **not** need this when you are only doing owner maintenance through an authorized Supabase connector.
-
-For an external LLM/app that needs the restricted API, generate a runtime key locally:
-
-```bash
-python scripts/generate_api_key.py --workspace-id YOUR_WORKSPACE_UUID
-```
-
-Store the plaintext `fc_...` value in the client's secret store.
-
-Only its SHA-256 hash belongs in Supabase.
-
-Recommended normal scopes:
+Then upload `dist/financecanvas.zip` from:
 
 ```text
-read,write,watch,export
+Plugins → Skills → Create → Upload
 ```
 
-Do not grant `admin` to an ordinary runtime client.
-
-See [INSTALL.md](INSTALL.md) for the full bootstrap procedure.
-
-## 6. Run acceptance testing
-
-Before real financial data:
-
-```bash
-FINANCECANVAS_API_URL="https://YOUR_PROJECT_REF.supabase.co/functions/v1/financecanvas-api" \
-FINANCECANVAS_BOOTSTRAP_API_KEY="fc_..." \
-python scripts/acceptance_test.py
-```
-
-The test uses synthetic data only and cleans up its test workspace.
-
-See [ACCEPTANCE_TEST.md](ACCEPTANCE_TEST.md).
+For uncommon self-hosted/backend/developer setup, see [ADVANCED_SETUP.md](ADVANCED_SETUP.md). The concise installer reference is in [INSTALL.md](INSTALL.md).
 
 ---
 
@@ -641,6 +584,6 @@ See [COMPLIANCE.md](COMPLIANCE.md) and [ROADMAP.md](ROADMAP.md).
 
 ## License
 
-No open-source license has been selected yet.
+FinanceCanvas is licensed under the [Apache License 2.0](LICENSE).
 
-A public GitHub repository does **not** by itself grant permission to copy, modify, distribute, or commercially use the code.
+Apache-2.0 permits private use, modification, distribution and commercial use subject to its terms, and includes an explicit patent grant. See [NOTICE](NOTICE) and [THIRD_PARTY.md](THIRD_PARTY.md) for attribution/dependency information.
