@@ -7,8 +7,8 @@ const cors = {
 };
 const editable = new Set(["workspaces","profiles","institutions","accounts","transactions","merchant_aliases","loans","insurance_policies","assets","liabilities","investments","subscriptions","goals","watch_rules","data_freshness"]);
 const deletable = new Set(["profiles","institutions","accounts","transactions","merchant_aliases","loans","insurance_policies","assets","liabilities","investments","subscriptions","goals","watch_rules"]);
-const genericCreate = new Set(["institutions","account_owners","transaction_splits","merchant_aliases","loans","loan_payments","insurance_policies","assets","liabilities","investments","investment_transactions","subscriptions","goals","correction_memory","data_freshness"]);
-const genericList = new Set(["institutions","account_owners","transaction_splits","merchant_aliases","loans","loan_payments","insurance_policies","assets","liabilities","investments","investment_transactions","subscriptions","goals","correction_memory","duplicate_reviews","audit_log","watch_rules","watch_findings","data_freshness"]);
+const genericCreate = new Set(["institutions","account_owners","transaction_splits","merchant_aliases","loans","loan_payments","insurance_policies","assets","liabilities","investments","investment_transactions","subscriptions","goals","correction_memory","data_freshness","processing_consents","sensitive_data_events","privacy_requests","breach_incidents"]);
+const genericList = new Set(["institutions","account_owners","transaction_splits","merchant_aliases","loans","loan_payments","insurance_policies","assets","liabilities","investments","investment_transactions","subscriptions","goals","correction_memory","duplicate_reviews","audit_log","watch_rules","watch_findings","data_freshness","processing_consents","sensitive_data_events","privacy_requests","breach_incidents","security_events"]);
 
 function respond(body: unknown, status=200) {
   return new Response(JSON.stringify(body), {status, headers:{...cors,"content-type":"application/json; charset=utf-8"}});
@@ -48,6 +48,38 @@ function differences(a:Record<string,any>,b:Record<string,any>){
     if(JSON.stringify(a[f]??null)!==JSON.stringify(b[f]??null)) out[f]={existing:a[f]??null,incoming:b[f]??null};
   return out;
 }
+const forbiddenKey=/(^|_)(cvv|cvc|pin|upi_pin|otp|password|passcode|secret|private_key|seed|mnemonic|recovery_phrase|aadhaar|aadhar|vid|card_number|full_card_number|account_number|api_key|access_token|refresh_token)($|_)/i;
+function luhnDigits(raw:string){
+  const digits=raw.replace(/\D/g,""); if(digits.length<13||digits.length>19)return false;
+  let sum=0, alt=false; for(let i=digits.length-1;i>=0;i--){let n=Number(digits[i]);if(alt){n*=2;if(n>9)n-=9}sum+=n;alt=!alt} return sum%10===0;
+}
+function redactCardNumbers(s:string){
+  return s.replace(/(?:\d[ -]?){13,19}/g,(m)=>luhnDigits(m)?("[REDACTED_CARD_LAST4_"+m.replace(/\D/g,"").slice(-4)+"]"):m);
+}
+function sanitizeValue(v:any,path="root"):any{
+  if(v===null||v===undefined)return v;
+  if(typeof v==="string")return redactCardNumbers(v);
+  if(Array.isArray(v))return v.map((x,i)=>sanitizeValue(x,path+"["+i+"]"));
+  if(typeof v==="object"){
+    const out:Record<string,any>={};
+    for(const [k,val] of Object.entries(v)){
+      if(forbiddenKey.test(k)&&val!==null&&val!==undefined&&String(val)!=="") {
+        const e:any=new Error("High-risk secret/identifier field is not allowed in FinanceCanvas persistent storage: "+k);
+        e.status=422; e.code="SENSITIVE_SECRET_NOT_ALLOWED"; e.field=k; throw e;
+      }
+      out[k]=sanitizeValue(val,path+"."+k);
+    }
+    return out;
+  }
+  return v;
+}
+function auditSafe(v:any):any{
+  const x=sanitizeValue(v);
+  if(!x||typeof x!=="object"||Array.isArray(x))return x;
+  const out={...x};
+  for(const k of ["raw_values","normalized_values","raw_description","transaction_reference","metadata"]) if(k in out) delete out[k];
+  return out;
+}
 async function auth(req:Request,db:any){
   const h=req.headers.get("authorization")??"";
   const token=h.startsWith("Bearer ")?h.slice(7).trim():"";
@@ -73,7 +105,7 @@ Deno.serve(async(req:Request)=>{
   try {
     const db=createClient(Deno.env.get("SUPABASE_URL")!,serverKey(),{auth:{persistSession:false,autoRefreshToken:false}});
     await auth(req,db);
-    const body=await req.json(), op=String(body.operation??""), p=(body.payload??{}) as Record<string,any>;
+    const body=await req.json(), op=String(body.operation??""), p=sanitizeValue((body.payload??{}) as Record<string,any>);
 
     if(op==="initialization_status"){
       const {data,error}=await db.from("workspaces").select("id,name,base_currency,is_default,initialized").order("created_at");
@@ -107,7 +139,7 @@ Deno.serve(async(req:Request)=>{
       reqFields(p,["workspace_id","display_name"]);
       const row={workspace_id:p.workspace_id,display_name:p.display_name,relationship:p.relationship??null,is_household:Boolean(p.is_household)};
       const {data,error}=await db.from("profiles").insert(row).select().single();if(error)throw error;
-      await db.from("audit_log").insert({workspace_id:p.workspace_id,action:"create_profile",target_table:"profiles",target_id:data.id,after_snapshot:data});
+      await db.from("audit_log").insert({workspace_id:p.workspace_id,action:"create_profile",target_table:"profiles",target_id:data.id,after_snapshot:auditSafe(data)});
       return respond({profile:data});
     }
     if(op==="list_accounts"){
@@ -116,9 +148,10 @@ Deno.serve(async(req:Request)=>{
     }
     if(op==="create_account"){
       reqFields(p,["workspace_id","name","account_type"]);
-      const row={workspace_id:p.workspace_id,institution_id:p.institution_id??null,name:p.name,account_type:p.account_type,currency:String(p.currency??"INR").toUpperCase(),identifier_last4:p.identifier_last4??null,current_balance:p.current_balance??null,balance_as_of:p.balance_as_of??null,metadata:p.metadata??{}};
+      if(p.identifier_last4 && !/^\d{1,4}$/.test(String(p.identifier_last4))) throw new Error("identifier_last4 must contain at most the final 4 digits");
+      const row={workspace_id:p.workspace_id,institution_id:p.institution_id??null,name:p.name,account_type:p.account_type,currency:String(p.currency??"INR").toUpperCase(),identifier_last4:p.identifier_last4??null,current_balance:p.current_balance??null,balance_as_of:p.balance_as_of??null,metadata:sanitizeValue(p.metadata??{})};
       const {data,error}=await db.from("accounts").insert(row).select().single();if(error)throw error;
-      await db.from("audit_log").insert({workspace_id:p.workspace_id,action:"create_account",target_table:"accounts",target_id:data.id,after_snapshot:data});
+      await db.from("audit_log").insert({workspace_id:p.workspace_id,action:"create_account",target_table:"accounts",target_id:data.id,after_snapshot:auditSafe(data)});
       return respond({account:data});
     }
     if(op==="create_record"){
@@ -134,7 +167,7 @@ Deno.serve(async(req:Request)=>{
         clean.workspace_id=p.workspace_id;
       }
       const r=await db.from(String(p.table)).insert(clean).select().single(); if(r.error) throw r.error;
-      await db.from("audit_log").insert({workspace_id:p.workspace_id,action:"create_"+p.table,target_table:p.table,target_id:r.data.id??null,after_snapshot:r.data});
+      await db.from("audit_log").insert({workspace_id:p.workspace_id,action:"create_"+p.table,target_table:p.table,target_id:r.data.id??null,after_snapshot:auditSafe(r.data)});
       return respond({record:r.data});
     }
     if(op==="list_records"){
@@ -198,7 +231,7 @@ Deno.serve(async(req:Request)=>{
         const row={workspace_id:p.workspace_id,profile_id:t.profile_id??null,account_id:t.account_id,import_id:t.import_id??null,posted_date:t.posted_date,transaction_date:t.transaction_date??null,amount:t.amount,currency:String(t.currency??"INR").toUpperCase(),direction:t.direction,raw_description:t.raw_description??null,merchant_normalized:t.merchant_normalized??null,transaction_reference:t.transaction_reference??null,category:t.category??null,subcategory:t.subcategory??null,purpose:t.purpose??null,confidence:t.confidence??null,confirmation_status:t.confirmation_status??"confirmed",raw_values:t.raw_values??{},normalized_values:t.normalized_values??{},base_fingerprint:base,fingerprint,duplicate_of_transaction_id:duplicateOf,duplicate_override_reason:overrideReason,duplicate_override_at:overrideReason?new Date().toISOString():null};
         const {data,error}=await db.from("transactions").insert(row).select().single();if(error){if(String(error.code)==="23505"){conflicts.push({client_id:client,type:"exact_database_constraint"});continue}throw error}
         inserted.push(data);
-        await db.from("audit_log").insert({workspace_id:p.workspace_id,action:overrideReason?"create_transaction_duplicate_override":"create_transaction",target_table:"transactions",target_id:data.id,after_snapshot:data,reason:overrideReason});
+        await db.from("audit_log").insert({workspace_id:p.workspace_id,action:overrideReason?"create_transaction_duplicate_override":"create_transaction",target_table:"transactions",target_id:data.id,after_snapshot:auditSafe(data),reason:overrideReason});
         const fr=await db.from("data_freshness").select("confirmed_through").eq("workspace_id",p.workspace_id).eq("account_id",t.account_id).maybeSingle();
         if(fr.error) throw fr.error;
         const confirmedThrough=(!fr.data?.confirmed_through || String(t.posted_date)>String(fr.data.confirmed_through)) ? t.posted_date : fr.data.confirmed_through;
@@ -235,18 +268,18 @@ Deno.serve(async(req:Request)=>{
       if(o.operation_type==="edit_record"){
         let q=db.from(o.target_table).update(o.requested_change).eq("id",o.target_id);if(o.target_table!=="workspaces")q=q.eq("workspace_id",p.workspace_id);
         const u=await q.select().single();if(u.error)throw u.error;
-        await db.from("audit_log").insert({workspace_id:p.workspace_id,action:"edit_"+o.target_table,target_table:o.target_table,target_id:o.target_id,before_snapshot:o.before_snapshot,after_snapshot:u.data,reason:o.reason});
+        await db.from("audit_log").insert({workspace_id:p.workspace_id,action:"edit_"+o.target_table,target_table:o.target_table,target_id:o.target_id,before_snapshot:auditSafe(o.before_snapshot),after_snapshot:auditSafe(u.data),reason:o.reason});
         await db.from("pending_operations").update({status:"applied",applied_at:new Date().toISOString()}).eq("id",o.id);return respond({applied:true,record:u.data});
       }
       if(o.operation_type==="soft_delete_record"){
         const patch=o.target_table==="watch_rules"?{enabled:false}:{deleted_at:new Date().toISOString()};
         const u=await db.from(o.target_table).update(patch).eq("id",o.target_id).eq("workspace_id",p.workspace_id).select().single();if(u.error)throw u.error;
-        await db.from("audit_log").insert({workspace_id:p.workspace_id,action:"soft_delete_"+o.target_table,target_table:o.target_table,target_id:o.target_id,before_snapshot:o.before_snapshot,after_snapshot:u.data,reason:o.reason});
+        await db.from("audit_log").insert({workspace_id:p.workspace_id,action:"soft_delete_"+o.target_table,target_table:o.target_table,target_id:o.target_id,before_snapshot:auditSafe(o.before_snapshot),after_snapshot:auditSafe(u.data),reason:o.reason});
         await db.from("pending_operations").update({status:"applied",applied_at:new Date().toISOString()}).eq("id",o.id);return respond({applied:true,record:u.data});
       }
       if(o.operation_type==="permanent_delete_record"){
         const d=await db.from(o.target_table).delete().eq("id",o.target_id).eq("workspace_id",p.workspace_id);if(d.error)throw d.error;
-        await db.from("audit_log").insert({workspace_id:p.workspace_id,action:"permanent_delete_"+o.target_table,target_table:o.target_table,target_id:o.target_id,before_snapshot:o.before_snapshot,reason:o.reason});
+        await db.from("audit_log").insert({workspace_id:p.workspace_id,action:"permanent_delete_"+o.target_table,target_table:o.target_table,target_id:o.target_id,before_snapshot:{id:o.target_id},reason:o.reason,metadata:{data_minimized:true}});
         await db.from("pending_operations").update({status:"applied",applied_at:new Date().toISOString()}).eq("id",o.id);return respond({applied:true});
       }
     }
@@ -257,7 +290,7 @@ Deno.serve(async(req:Request)=>{
     }
     if(op==="create_watch_rule"){
       reqFields(p,["workspace_id","name","rule_type"]);const row={workspace_id:p.workspace_id,profile_id:p.profile_id??null,name:p.name,rule_type:p.rule_type,cadence:p.cadence??null,severity:p.severity??"notice",configuration:p.configuration??{},enabled:p.enabled??true};
-      const r=await db.from("watch_rules").insert(row).select().single();if(r.error)throw r.error;await db.from("audit_log").insert({workspace_id:p.workspace_id,action:"create_watch_rule",target_table:"watch_rules",target_id:r.data.id,after_snapshot:r.data});return respond({watch_rule:r.data});
+      const r=await db.from("watch_rules").insert(row).select().single();if(r.error)throw r.error;await db.from("audit_log").insert({workspace_id:p.workspace_id,action:"create_watch_rule",target_table:"watch_rules",target_id:r.data.id,after_snapshot:auditSafe(r.data)});return respond({watch_rule:r.data});
     }
     if(op==="list_watch_rules"){
       reqFields(p,["workspace_id"]);const r=await db.from("watch_rules").select("*").eq("workspace_id",p.workspace_id).order("created_at",{ascending:false});if(r.error)throw r.error;return respond({watch_rules:r.data??[]});
@@ -289,6 +322,7 @@ Deno.serve(async(req:Request)=>{
     }
     return respond({error:"Unknown operation: "+op},404);
   } catch(e){
-    const status=Number((e as any)?.status??400);return respond({error:(e as Error).message??String(e)},status>=400&&status<600?status:400);
+    const status=Number((e as any)?.status??400);
+    return respond({error:(e as Error).message??String(e),code:(e as any)?.code??"REQUEST_REJECTED",field:(e as any)?.field??null},status>=400&&status<600?status:400);
   }
 });
