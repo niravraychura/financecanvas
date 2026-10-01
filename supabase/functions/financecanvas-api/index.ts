@@ -199,7 +199,7 @@ Deno.serve(async(req:Request)=>{
     if(op==="create_account"){
       reqFields(p,["workspace_id","name","account_type"]);
       if(p.identifier_last4 && !/^\d{1,4}$/.test(String(p.identifier_last4))) throw new Error("identifier_last4 must contain at most the final 4 digits");
-      const row={workspace_id:p.workspace_id,institution_id:p.institution_id??null,name:p.name,account_type:p.account_type,currency:String(p.currency??"INR").toUpperCase(),identifier_last4:p.identifier_last4??null,current_balance:p.current_balance??null,balance_as_of:p.balance_as_of??null,metadata:sanitizeValue(p.metadata??{})};
+      const row={workspace_id:p.workspace_id,institution_id:p.institution_id??null,name:p.name,account_type:p.account_type,currency:String(p.currency??"INR").toUpperCase(),identifier_last4:p.identifier_last4??null,current_balance:p.current_balance??null,balance_as_of:p.balance_as_of??null,credit_limit:p.credit_limit??null,annual_fee:p.annual_fee??null,annual_fee_waiver_spend:p.annual_fee_waiver_spend??null,metadata:sanitizeValue(p.metadata??{})};
       const {data,error}=await db.from("accounts").insert(row).select().single();if(error)throw error;
       await db.from("audit_log").insert({workspace_id:p.workspace_id,action:"create_account",target_table:"accounts",target_id:data.id,after_snapshot:auditSafe(data)});
       return respond({account:data});
@@ -355,18 +355,158 @@ Deno.serve(async(req:Request)=>{
       reqFields(p,["workspace_id"]);const r=await db.from("watch_rules").select("*").eq("workspace_id",p.workspace_id).order("created_at",{ascending:false});if(r.error)throw r.error;return respond({watch_rules:r.data??[]});
     }
     if(op==="run_watch_checks"){
-      reqFields(p,["workspace_id"]);const ws=p.workspace_id, days=Math.max(1,Math.min(Number(p.lookback_days??35),365)), d=new Date();d.setUTCDate(d.getUTCDate()-days);const since=d.toISOString().slice(0,10);
-      const [rr,tr,fr]=await Promise.all([db.from("watch_rules").select("*").eq("workspace_id",ws).eq("enabled",true),db.from("transactions").select("*").eq("workspace_id",ws).is("deleted_at",null).gte("posted_date",since).order("posted_date",{ascending:false}).limit(5000),db.from("data_freshness").select("*,accounts(name,account_type)").eq("workspace_id",ws)]);
-      for(const r of [rr,tr,fr])if(r.error)throw r.error;const tx=tr.data??[], findings:any[]=[];
+      reqFields(p,["workspace_id"]);
+      const ws=p.workspace_id;
+      const days=Math.max(1,Math.min(Number(p.lookback_days??35),365));
+      const now=new Date();
+      const d=new Date(now); d.setUTCDate(d.getUTCDate()-days);
+      const since=d.toISOString().slice(0,10);
+      const dayDiff=(dateStr:string)=>Math.floor((new Date(dateStr+"T00:00:00Z").getTime()-new Date(now.toISOString().slice(0,10)+"T00:00:00Z").getTime())/86400000);
+
+      const [rr,tr,fr,cc,ins,goals,budgets,recurring,investments,accounts]=await Promise.all([
+        db.from("watch_rules").select("*").eq("workspace_id",ws).eq("enabled",true),
+        db.from("transactions").select("*").eq("workspace_id",ws).is("deleted_at",null).gte("posted_date",since).order("posted_date",{ascending:false}).limit(5000),
+        db.from("data_freshness").select("*,accounts(name,account_type)").eq("workspace_id",ws),
+        db.from("credit_card_statements").select("*").eq("workspace_id",ws).is("deleted_at",null),
+        db.from("insurance_policies").select("*").eq("workspace_id",ws).is("deleted_at",null),
+        db.from("goals").select("*").eq("workspace_id",ws).is("deleted_at",null).eq("status","active"),
+        db.from("budgets").select("*").eq("workspace_id",ws).is("deleted_at",null).eq("status","active"),
+        db.from("recurring_items").select("*").eq("workspace_id",ws).is("deleted_at",null).eq("enabled",true),
+        db.from("investments").select("*").eq("workspace_id",ws).is("deleted_at",null),
+        db.from("accounts").select("*").eq("workspace_id",ws).is("deleted_at",null)
+      ]);
+      for(const r of [rr,tr,fr,cc,ins,goals,budgets,recurring,investments,accounts])if(r.error)throw r.error;
+      const tx=tr.data??[], findings:any[]=[];
       const add=async(f:any)=>findings.push({...f,workspace_id:ws,finding_fingerprint:await sha256(JSON.stringify([ws,f.watch_rule_id??null,f.finding_type,f.transaction_id??null,f.evidence??{}]))});
+
       for(const rule of rr.data??[]){
         const cfg=rule.configuration??{};
-        if(rule.rule_type==="fee_watch"){const re=/(annual fee|joining fee|late fee|interest|finance charge|forex|markup|surcharge|cash advance|over.?limit|processing fee|convenience fee|gst.*fee)/i;for(const t of tx){const text=[t.category,t.subcategory,t.raw_description,t.merchant_normalized].join(" ");if(re.test(text))await add({watch_rule_id:rule.id,profile_id:t.profile_id,transaction_id:t.id,finding_type:"possible_fee",severity:rule.severity??"warning",title:"Possible fee/charge: "+t.amount+" "+t.currency,explanation:"This transaction contains wording commonly associated with a fee, interest, markup, or surcharge. Verify whether it was expected and correctly applied.",next_steps:["Verify the underlying transaction and account/card terms.","If unexpected, contact the issuer and request the charge basis or reversal eligibility."],evidence:{posted_date:t.posted_date,raw_description:t.raw_description,amount:t.amount,currency:t.currency}})}}
-        if(["fraud_watch","high_value"].includes(rule.rule_type)){const th=Number(cfg.threshold_amount??0);if(th>0)for(const t of tx)if(t.direction==="debit"&&Number(t.amount)>=th)await add({watch_rule_id:rule.id,profile_id:t.profile_id,transaction_id:t.id,finding_type:"high_value_transaction",severity:rule.severity??"warning",title:"High-value debit: "+t.amount+" "+t.currency,explanation:"This debit met the configured threshold. It is an anomaly signal, not proof of fraud.",next_steps:["Confirm the merchant/recipient and amount.","If unrecognized, contact the financial institution promptly."],evidence:{threshold:th,posted_date:t.posted_date,merchant:t.merchant_normalized??t.raw_description,amount:t.amount,currency:t.currency}})}
-        if(rule.rule_type==="duplicate_charge"){const groups=new Map<string,any[]>();for(const t of tx.filter((x:any)=>x.direction==="debit")){const k=[t.account_id,Number(t.amount).toFixed(2),t.currency,norm(t.merchant_normalized??t.raw_description)].join("|");groups.set(k,[...(groups.get(k)??[]),t])}for(const rows of groups.values()){rows.sort((a,b)=>String(a.posted_date).localeCompare(String(b.posted_date)));for(let i=1;i<rows.length;i++){const gap=Math.abs(new Date(rows[i].posted_date).getTime()-new Date(rows[i-1].posted_date).getTime());if(gap<=172800000){const t=rows[i];await add({watch_rule_id:rule.id,profile_id:t.profile_id,transaction_id:t.id,finding_type:"possible_duplicate_charge",severity:rule.severity??"warning",title:"Possible duplicate charge: "+t.amount+" "+t.currency,explanation:"Two very similar debits occurred close together; they may still be legitimate separate purchases.",next_steps:["Compare both transactions and receipts/order history.","If one is unrecognized, contact the issuer/merchant promptly."],evidence:{transaction_ids:[rows[i-1].id,t.id],dates:[rows[i-1].posted_date,t.posted_date],amount:t.amount}})}}}}
+
+        if(rule.rule_type==="fee_watch"){
+          const re=/(annual fee|joining fee|late fee|interest|finance charge|forex|markup|surcharge|cash advance|over.?limit|processing fee|convenience fee|gst.*fee)/i;
+          for(const t of tx){
+            const text=[t.category,t.subcategory,t.raw_description,t.merchant_normalized].join(" ");
+            if(re.test(text))await add({watch_rule_id:rule.id,profile_id:t.profile_id,transaction_id:t.id,finding_type:"possible_fee",severity:rule.severity??"warning",title:"Possible fee/charge: "+t.amount+" "+t.currency,explanation:"This transaction contains wording commonly associated with a fee, interest, markup, or surcharge. Verify whether it was expected and correctly applied.",next_steps:["Verify the underlying transaction and account/card terms.","If unexpected, contact the issuer and request the charge basis or reversal eligibility."],evidence:{posted_date:t.posted_date,raw_description:t.raw_description,amount:t.amount,currency:t.currency}});
+          }
+        }
+
+        if(["fraud_watch","high_value"].includes(rule.rule_type)){
+          const th=Number(cfg.threshold_amount??0);
+          if(th>0)for(const t of tx)if(t.direction==="debit"&&Number(t.amount)>=th)await add({watch_rule_id:rule.id,profile_id:t.profile_id,transaction_id:t.id,finding_type:"high_value_transaction",severity:rule.severity??"warning",title:"High-value debit: "+t.amount+" "+t.currency,explanation:"This debit met the configured threshold. It is an anomaly signal, not proof of fraud.",next_steps:["Confirm the merchant/recipient and amount.","If unrecognized, contact the financial institution promptly."],evidence:{threshold:th,posted_date:t.posted_date,merchant:t.merchant_normalized??t.raw_description,amount:t.amount,currency:t.currency}});
+        }
+
+        if(rule.rule_type==="duplicate_charge"){
+          const groups=new Map<string,any[]>();
+          for(const t of tx.filter((x:any)=>x.direction==="debit")){
+            const k=[t.account_id,Number(t.amount).toFixed(2),t.currency,norm(t.merchant_normalized??t.raw_description)].join("|");
+            groups.set(k,[...(groups.get(k)??[]),t]);
+          }
+          for(const rows of groups.values()){
+            rows.sort((a,b)=>String(a.posted_date).localeCompare(String(b.posted_date)));
+            for(let i=1;i<rows.length;i++){
+              const gap=Math.abs(new Date(rows[i].posted_date).getTime()-new Date(rows[i-1].posted_date).getTime());
+              if(gap<=172800000){
+                const t=rows[i];
+                await add({watch_rule_id:rule.id,profile_id:t.profile_id,transaction_id:t.id,finding_type:"possible_duplicate_charge",severity:rule.severity??"warning",title:"Possible duplicate charge: "+t.amount+" "+t.currency,explanation:"Two very similar debits occurred close together; they may still be legitimate separate purchases.",next_steps:["Compare both transactions and receipts/order history.","If one is unrecognized, contact the issuer/merchant promptly."],evidence:{transaction_ids:[rows[i-1].id,t.id],dates:[rows[i-1].posted_date,t.posted_date],amount:t.amount}});
+              }
+            }
+          }
+        }
+
+        if(rule.rule_type==="card_due"){
+          const windowDays=Math.max(0,Math.min(Number(cfg.window_days??7),60));
+          for(const s of cc.data??[]){
+            if(!s.due_date||s.payment_status==="paid")continue;
+            const dd=dayDiff(s.due_date);
+            if(dd<=windowDays&&dd>=-30)await add({watch_rule_id:rule.id,transaction_id:null,finding_type:dd<0?"card_payment_overdue":"card_payment_due",severity:dd<0?"critical":(rule.severity??"warning"),title:(dd<0?"Credit-card payment overdue":"Credit-card payment due")+" on "+s.due_date,explanation:"A stored credit-card statement is not marked paid.",next_steps:["Verify whether payment has already been made.","If unpaid, review the issuer statement and due amount before taking action."],evidence:{statement_id:s.id,account_id:s.account_id,due_date:s.due_date,total_due:s.total_due,minimum_due:s.minimum_due,currency:s.currency,payment_status:s.payment_status}});
+          }
+        }
+
+        if(rule.rule_type==="card_utilization"){
+          const threshold=Number(cfg.threshold_percent??30);
+          for(const a of accounts.data??[]){
+            if(a.account_type!=="credit_card"||a.current_balance===null||!a.credit_limit||Number(a.credit_limit)<=0)continue;
+            const pct=Number(a.current_balance)/Number(a.credit_limit)*100;
+            if(pct>=threshold)await add({watch_rule_id:rule.id,transaction_id:null,finding_type:"high_card_utilization",severity:rule.severity??"notice",title:"Credit-card utilization "+pct.toFixed(1)+"%",explanation:"The stored current balance exceeds the configured utilization threshold.",next_steps:["Verify the balance and credit limit are current.","Consider payment timing based on your own cash-flow priorities."],evidence:{account_id:a.id,balance:a.current_balance,credit_limit:a.credit_limit,utilization_percent:Number(pct.toFixed(2)),threshold_percent:threshold}});
+          }
+        }
+
+        if(rule.rule_type==="insurance_renewal"){
+          const windowDays=Math.max(0,Math.min(Number(cfg.window_days??30),180));
+          for(const x of ins.data??[]){
+            if(!x.renewal_date)continue;
+            const dd=dayDiff(x.renewal_date);
+            if(dd>=0&&dd<=windowDays)await add({watch_rule_id:rule.id,profile_id:x.profile_id,transaction_id:null,finding_type:"insurance_renewal_upcoming",severity:rule.severity??"notice",title:"Insurance renewal due "+x.renewal_date,explanation:"A stored insurance policy has an upcoming renewal date.",next_steps:["Review coverage, premium and renewal terms before the due date."],evidence:{policy_id:x.id,policy_name:x.policy_name,renewal_date:x.renewal_date,premium_amount:x.premium_amount,currency:x.currency}});
+          }
+        }
+
+        if(rule.rule_type==="goal_watch"){
+          const windowDays=Math.max(1,Math.min(Number(cfg.window_days??90),3650));
+          for(const g of goals.data??[]){
+            if(!g.target_date||g.target_amount===null)continue;
+            const dd=dayDiff(g.target_date), current=Number(g.current_amount??0), target=Number(g.target_amount);
+            if(dd<=windowDays&&current<target)await add({watch_rule_id:rule.id,profile_id:g.profile_id,transaction_id:null,finding_type:dd<0?"goal_overdue":"goal_behind_target",severity:rule.severity??"notice",title:(dd<0?"Goal target date passed: ":"Goal approaching: ")+g.name,explanation:"The stored goal has not yet reached its target amount.",next_steps:["Review the goal assumptions and contribution plan."],evidence:{goal_id:g.id,target_date:g.target_date,current_amount:current,target_amount:target,currency:g.currency,days_to_target:dd}});
+          }
+        }
+
+        if(["budget_watch","spending_watch"].includes(rule.rule_type)){
+          for(const b of budgets.data??[]){
+            const from=b.start_date, to=b.end_date??now.toISOString().slice(0,10);
+            const relevant=tx.filter((t:any)=>t.direction==="debit"&&t.currency===b.currency&&t.posted_date>=from&&t.posted_date<=to&&(!b.category||t.category===b.category)&&(!b.subcategory||t.subcategory===b.subcategory));
+            const spent=relevant.reduce((s:number,t:any)=>s+Number(t.amount),0);
+            if(spent>Number(b.amount))await add({watch_rule_id:rule.id,profile_id:b.profile_id,transaction_id:null,finding_type:"budget_exceeded",severity:rule.severity??"warning",title:"Budget exceeded: "+b.name,explanation:"Confirmed debits in the budget period exceed the stored budget amount.",next_steps:["Review the transactions included in this budget.","Adjust spending or the budget only if that reflects your actual plan."],evidence:{budget_id:b.id,budget_amount:b.amount,spent:Number(spent.toFixed(2)),currency:b.currency,category:b.category,from,to}});
+          }
+        }
+
+        if(["recurring_watch","subscription_watch"].includes(rule.rule_type)){
+          const windowDays=Math.max(0,Math.min(Number(cfg.window_days??7),90));
+          for(const x of recurring.data??[]){
+            if(!x.next_expected_date)continue;
+            if(rule.rule_type==="subscription_watch"&&x.item_type!=="subscription")continue;
+            const dd=dayDiff(x.next_expected_date);
+            if(dd>=0&&dd<=windowDays)await add({watch_rule_id:rule.id,profile_id:x.profile_id,transaction_id:null,finding_type:"recurring_item_upcoming",severity:rule.severity??"info",title:"Upcoming recurring item: "+x.name,explanation:"A stored recurring item is expected soon.",next_steps:["Verify the amount/date if the plan has changed."],evidence:{recurring_item_id:x.id,item_type:x.item_type,next_expected_date:x.next_expected_date,amount:x.amount,currency:x.currency}});
+          }
+        }
+
+        if(rule.rule_type==="investment_concentration"){
+          const threshold=Number(cfg.threshold_percent??40);
+          const byCurrency=new Map<string,any[]>();
+          for(const x of investments.data??[])if(x.current_value!==null&&Number(x.current_value)>=0)byCurrency.set(x.currency,[...(byCurrency.get(x.currency)??[]),x]);
+          for(const [currency,rows] of byCurrency.entries()){
+            const total=rows.reduce((s,x)=>s+Number(x.current_value),0); if(total<=0)continue;
+            for(const x of rows){const pct=Number(x.current_value)/total*100;if(pct>=threshold)await add({watch_rule_id:rule.id,profile_id:x.profile_id,transaction_id:null,finding_type:"investment_concentration",severity:rule.severity??"notice",title:"Investment concentration "+pct.toFixed(1)+"%: "+x.name,explanation:"One stored investment represents at least the configured share of tracked investments in the same currency. This is a concentration signal, not a buy/sell recommendation.",next_steps:["Review whether the concentration matches your intended allocation and risk tolerance."],evidence:{investment_id:x.id,current_value:x.current_value,currency,portfolio_value:total,concentration_percent:Number(pct.toFixed(2)),threshold_percent:threshold}});}
+          }
+        }
+
+        if(rule.rule_type==="refund_watch"){
+          const expectedBy=String(cfg.expected_by??"");
+          const amount=Number(cfg.amount??0), currency=String(cfg.currency??"INR").toUpperCase(), merchant=norm(cfg.merchant??"");
+          if(expectedBy&&dayDiff(expectedBy)<0&&amount>0){
+            const found=tx.some((t:any)=>t.direction==="credit"&&t.currency===currency&&Math.abs(Number(t.amount)-amount)<0.01&&(!merchant||norm(t.merchant_normalized??t.raw_description).includes(merchant)));
+            if(!found)await add({watch_rule_id:rule.id,transaction_id:null,finding_type:"refund_not_found",severity:rule.severity??"warning",title:"Expected refund not found",explanation:"No matching confirmed credit was found by the configured expected date.",next_steps:["Check the merchant/issuer refund status and whether the refund posted under a different description or amount."],evidence:{expected_by:expectedBy,amount,currency,merchant:cfg.merchant??null}});
+          }
+        }
+
+        if(rule.rule_type==="cash_flow_watch"){
+          const threshold=Number(cfg.minimum_net_cash_flow??0);
+          const currency=String(cfg.currency??"INR").toUpperCase();
+          const rows=tx.filter((t:any)=>t.currency===currency&&t.direction!=="transfer");
+          const net=rows.reduce((s:number,t:any)=>s+(t.direction==="credit"?Number(t.amount):-Number(t.amount)),0);
+          if(net<threshold)await add({watch_rule_id:rule.id,transaction_id:null,finding_type:"cash_flow_below_threshold",severity:rule.severity??"notice",title:"Net cash flow below configured threshold",explanation:"Confirmed inflows minus outflows in the lookback period are below the configured threshold.",next_steps:["Review the included period and transactions before changing spending or savings plans."],evidence:{lookback_days:days,net_cash_flow:Number(net.toFixed(2)),threshold,currency}});
+        }
       }
-      for(const f of fr.data??[]){if(!f.confirmed_through||!f.expected_frequency_days)continue;const age=Math.floor((Date.now()-new Date(f.confirmed_through+"T00:00:00Z").getTime())/86400000);if(age>Number(f.expected_frequency_days))await add({watch_rule_id:null,transaction_id:null,finding_type:"stale_data",severity:"notice",title:"Financial data may be stale: "+(f.accounts?.name??"account"),explanation:"Confirmed data is "+age+" days old, beyond the configured freshness interval.",next_steps:["Import newer account data before relying on complete-period analysis."],evidence:{account_id:f.account_id,confirmed_through:f.confirmed_through,age_days:age}})}
-      let created=0;for(const f of findings){const r=await db.from("watch_findings").insert(f);if(!r.error)created++;else if(String(r.error.code)!=="23505")throw r.error}
+
+      for(const f of fr.data??[]){
+        if(!f.confirmed_through||!f.expected_frequency_days)continue;
+        const age=Math.floor((Date.now()-new Date(f.confirmed_through+"T00:00:00Z").getTime())/86400000);
+        if(age>Number(f.expected_frequency_days))await add({watch_rule_id:null,transaction_id:null,finding_type:"stale_data",severity:"notice",title:"Financial data may be stale: "+(f.accounts?.name??"account"),explanation:"Confirmed data is "+age+" days old, beyond the configured freshness interval.",next_steps:["Import newer account data before relying on complete-period analysis."],evidence:{account_id:f.account_id,confirmed_through:f.confirmed_through,age_days:age}});
+      }
+
+      let created=0;
+      for(const f of findings){
+        const r=await db.from("watch_findings").insert(f);
+        if(!r.error)created++; else if(String(r.error.code)!=="23505")throw r.error;
+      }
       await db.from("watch_rules").update({last_run_at:new Date().toISOString()}).eq("workspace_id",ws).eq("enabled",true);
       return respond({evaluated_transactions:tx.length,findings_generated:findings.length,new_findings_created:created,findings});
     }
