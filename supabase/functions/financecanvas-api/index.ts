@@ -699,20 +699,27 @@ Deno.serve(async(req:Request)=>{
       const since=d.toISOString().slice(0,10);
       const dayDiff=(dateStr:string)=>Math.floor((new Date(dateStr+"T00:00:00Z").getTime()-new Date(now.toISOString().slice(0,10)+"T00:00:00Z").getTime())/86400000);
 
-      const [rr,tr,fr,cc,ins,goals,budgets,recurring,investments,accounts]=await Promise.all([
+      const historyStart=new Date(now);historyStart.setUTCDate(historyStart.getUTCDate()-365);
+      const [rr,tr,hist,fr,cc,ins,goals,budgets,recurring,subs,investments,targets,accounts,loanPayments,loans,imports]=await Promise.all([
         db.from("watch_rules").select("*").eq("workspace_id",ws).eq("enabled",true),
         db.from("transactions").select("*").eq("workspace_id",ws).is("deleted_at",null).gte("posted_date",since).order("posted_date",{ascending:false}).limit(5000),
+        db.from("transactions").select("*").eq("workspace_id",ws).is("deleted_at",null).gte("posted_date",historyStart.toISOString().slice(0,10)).order("posted_date",{ascending:false}).limit(20000),
         db.from("data_freshness").select("*,accounts(name,account_type)").eq("workspace_id",ws),
         db.from("credit_card_statements").select("*").eq("workspace_id",ws).is("deleted_at",null),
         db.from("insurance_policies").select("*").eq("workspace_id",ws).is("deleted_at",null),
         db.from("goals").select("*").eq("workspace_id",ws).is("deleted_at",null).eq("status","active"),
         db.from("budgets").select("*").eq("workspace_id",ws).is("deleted_at",null).eq("status","active"),
         db.from("recurring_items").select("*").eq("workspace_id",ws).is("deleted_at",null).eq("enabled",true),
+        db.from("subscriptions").select("*").eq("workspace_id",ws).is("deleted_at",null),
         db.from("investments").select("*").eq("workspace_id",ws).is("deleted_at",null),
-        db.from("accounts").select("*").eq("workspace_id",ws).is("deleted_at",null)
+        db.from("investment_allocation_targets").select("*").eq("workspace_id",ws).is("deleted_at",null).eq("active",true),
+        db.from("accounts").select("*").eq("workspace_id",ws).is("deleted_at",null),
+        db.from("loan_payments").select("*").eq("workspace_id",ws).order("payment_date",{ascending:false}),
+        db.from("loans").select("*").eq("workspace_id",ws).is("deleted_at",null),
+        db.from("imports").select("*").eq("workspace_id",ws).is("deleted_at",null)
       ]);
-      for(const r of [rr,tr,fr,cc,ins,goals,budgets,recurring,investments,accounts])if(r.error)throw r.error;
-      const tx=tr.data??[], findings:any[]=[];
+      for(const r of [rr,tr,hist,fr,cc,ins,goals,budgets,recurring,subs,investments,targets,accounts,loanPayments,loans,imports])if(r.error)throw r.error;
+      const tx=tr.data??[], history=hist.data??[], findings:any[]=[];
       const add=async(f:any)=>findings.push({...f,workspace_id:ws,finding_fingerprint:await sha256(JSON.stringify([ws,f.watch_rule_id??null,f.finding_type,f.transaction_id??null,f.evidence??{}]))});
 
       for(const rule of rr.data??[]){
@@ -820,6 +827,99 @@ Deno.serve(async(req:Request)=>{
           if(expectedBy&&dayDiff(expectedBy)<0&&amount>0){
             const found=tx.some((t:any)=>t.direction==="credit"&&t.currency===currency&&Math.abs(Number(t.amount)-amount)<0.01&&(!merchant||norm(t.merchant_normalized??t.raw_description).includes(merchant)));
             if(!found)await add({watch_rule_id:rule.id,transaction_id:null,finding_type:"refund_not_found",severity:rule.severity??"warning",title:"Expected refund not found",explanation:"No matching confirmed credit was found by the configured expected date.",next_steps:["Check the merchant/issuer refund status and whether the refund posted under a different description or amount."],evidence:{expected_by:expectedBy,amount,currency,merchant:cfg.merchant??null}});
+          }
+        }
+
+        if(rule.rule_type==="subscription_change"){
+          const thresholdPct=Number(cfg.threshold_percent??10);
+          for(const x of recurring.data??[]){
+            if(x.item_type!=="subscription"||!x.merchant_name||x.amount===null)continue;
+            const merchant=norm(x.merchant_name);
+            const matches=history.filter((t:any)=>t.direction==="debit"&&t.currency===x.currency&&norm(t.merchant_normalized??t.raw_description).includes(merchant)).sort((a:any,b:any)=>String(b.posted_date).localeCompare(String(a.posted_date)));
+            if(!matches.length)continue;
+            const latest=matches[0], expected=Number(x.amount), actual=Number(latest.amount);
+            if(expected>0){
+              const pct=(actual-expected)/expected*100;
+              if(Math.abs(pct)>=thresholdPct)await add({watch_rule_id:rule.id,profile_id:x.profile_id,transaction_id:latest.id,finding_type:"subscription_price_change",severity:rule.severity??"notice",title:"Subscription amount changed: "+x.name,explanation:"The latest matching subscription debit differs from the stored expected amount.",next_steps:["Verify whether the provider changed its price or plan.","Update the recurring amount only if the change is expected."],evidence:{recurring_item_id:x.id,expected_amount:expected,latest_amount:actual,change_percent:Number(pct.toFixed(2)),currency:x.currency,posted_date:latest.posted_date}});
+            }
+          }
+          for(const s of subs.data??[]){
+            if(s.status!=="cancelled"||!s.merchant_name)continue;
+            const merchant=norm(s.merchant_name);
+            const latest=tx.find((t:any)=>t.direction==="debit"&&norm(t.merchant_normalized??t.raw_description).includes(merchant));
+            if(latest)await add({watch_rule_id:rule.id,profile_id:s.profile_id,transaction_id:latest.id,finding_type:"cancelled_subscription_reappeared",severity:rule.severity??"warning",title:"Cancelled subscription may have reappeared: "+s.merchant_name,explanation:"A recent matching debit was found for a subscription stored as cancelled.",next_steps:["Verify whether the subscription was intentionally restarted.","If not, review the merchant account and payment method."],evidence:{subscription_id:s.id,transaction_id:latest.id,posted_date:latest.posted_date,amount:latest.amount,currency:latest.currency}});
+          }
+        }
+
+        if(rule.rule_type==="spending_anomaly"){
+          const currentDays=Math.max(7,Math.min(Number(cfg.current_days??30),90));
+          const baselineDays=Math.max(currentDays*2,Math.min(Number(cfg.baseline_days??90),300));
+          const increasePct=Number(cfg.increase_percent??50), minAmount=Number(cfg.minimum_amount??1000);
+          const currentStart=new Date(now);currentStart.setUTCDate(currentStart.getUTCDate()-currentDays);
+          const baselineStart=new Date(currentStart);baselineStart.setUTCDate(baselineStart.getUTCDate()-baselineDays);
+          const currentStartS=currentStart.toISOString().slice(0,10), baselineStartS=baselineStart.toISOString().slice(0,10);
+          const cur=new Map<string,number>(), base=new Map<string,number>();
+          for(const t of history){
+            if(t.direction!=="debit"||t.purpose==="business"&&cfg.include_business===false)continue;
+            const key=String(t.category??"Uncategorized");
+            if(t.posted_date>=currentStartS)cur.set(key,(cur.get(key)??0)+Number(t.amount));
+            else if(t.posted_date>=baselineStartS)base.set(key,(base.get(key)??0)+Number(t.amount));
+          }
+          for(const [category,current] of cur.entries()){
+            const baselineEquivalent=(base.get(category)??0)/baselineDays*currentDays;
+            if(current<minAmount||baselineEquivalent<=0)continue;
+            const pct=(current-baselineEquivalent)/baselineEquivalent*100;
+            if(pct>=increasePct)await add({watch_rule_id:rule.id,transaction_id:null,finding_type:"category_spending_spike",severity:rule.severity??"notice",title:"Spending spike: "+category,explanation:"Recent confirmed spending in this category is materially above its prior daily baseline.",next_steps:["Review the transactions behind the increase.","Treat this as an anomaly signal; seasonal or one-off spending may explain it."],evidence:{category,current_days:currentDays,current_spend:Number(current.toFixed(2)),baseline_days:baselineDays,baseline_equivalent:Number(baselineEquivalent.toFixed(2)),increase_percent:Number(pct.toFixed(2))}});
+          }
+        }
+
+        if(rule.rule_type==="loan_emi_change"){
+          const thresholdPct=Number(cfg.threshold_percent??5);
+          for(const loan of loans.data??[]){
+            const rows=(loanPayments.data??[]).filter((x:any)=>x.loan_id===loan.id).sort((a:any,b:any)=>String(b.payment_date).localeCompare(String(a.payment_date)));
+            if(!rows.length)continue;
+            const latest=Number(rows[0].amount), expected=loan.emi_amount===null?null:Number(loan.emi_amount);
+            if(expected&&expected>0){
+              const pct=(latest-expected)/expected*100;
+              if(Math.abs(pct)>=thresholdPct)await add({watch_rule_id:rule.id,profile_id:loan.profile_id,transaction_id:rows[0].transaction_id??null,finding_type:"loan_payment_changed",severity:rule.severity??"warning",title:"Loan payment differs from stored EMI: "+loan.name,explanation:"The latest recorded loan payment differs materially from the stored EMI amount.",next_steps:["Check the lender schedule for rate, tenure, fee or prepayment changes.","Update the stored EMI only after verification."],evidence:{loan_id:loan.id,expected_emi:expected,latest_payment:latest,change_percent:Number(pct.toFixed(2)),payment_date:rows[0].payment_date}});
+            } else if(rows.length>=2){
+              const prev=Number(rows[1].amount); if(prev>0){const pct=(latest-prev)/prev*100;if(Math.abs(pct)>=thresholdPct)await add({watch_rule_id:rule.id,profile_id:loan.profile_id,transaction_id:rows[0].transaction_id??null,finding_type:"loan_payment_changed",severity:rule.severity??"warning",title:"Loan payment changed: "+loan.name,explanation:"The latest recorded loan payment differs materially from the previous payment.",next_steps:["Verify the lender schedule and reason for the change."],evidence:{loan_id:loan.id,previous_payment:prev,latest_payment:latest,change_percent:Number(pct.toFixed(2)),payment_date:rows[0].payment_date}});}
+            }
+          }
+        }
+
+        if(rule.rule_type==="annual_fee_watch"){
+          const windowDays=Math.max(0,Math.min(Number(cfg.window_days??45),180));
+          for(const a of accounts.data??[]){
+            if(a.account_type!=="credit_card"||!a.annual_fee||Number(a.annual_fee)<=0)continue;
+            const dd=a.annual_fee_next_date?dayDiff(a.annual_fee_next_date):null;
+            if(dd!==null&&dd>=0&&dd<=windowDays){
+              const yearAgo=new Date(now);yearAgo.setUTCFullYear(yearAgo.getUTCFullYear()-1);
+              const spend=history.filter((t:any)=>t.account_id===a.id&&t.direction==="debit"&&t.posted_date>=yearAgo.toISOString().slice(0,10)).reduce((s:number,t:any)=>s+Number(t.amount),0);
+              const waiver=a.annual_fee_waiver_spend===null?null:Number(a.annual_fee_waiver_spend);
+              await add({watch_rule_id:rule.id,transaction_id:null,finding_type:"annual_fee_upcoming",severity:rule.severity??"notice",title:"Credit-card annual fee approaching: "+a.name,explanation:waiver&&spend<waiver?"The annual-fee date is approaching and tracked spend is below the stored waiver threshold.":"The annual-fee date is approaching.",next_steps:["Verify the issuer's current waiver terms and eligible-spend exclusions before acting."],evidence:{account_id:a.id,annual_fee:a.annual_fee,annual_fee_next_date:a.annual_fee_next_date,tracked_12m_spend:Number(spend.toFixed(2)),waiver_spend_threshold:waiver,currency:a.currency,days_to_fee:dd}});
+            }
+          }
+        }
+
+        if(rule.rule_type==="reconciliation_watch"){
+          for(const imp of imports.data??[]){
+            if(imp.reconciliation_status!=="failed")continue;
+            await add({watch_rule_id:rule.id,profile_id:imp.profile_id,transaction_id:null,finding_type:"statement_reconciliation_failed",severity:rule.severity??"warning",title:"Statement reconciliation failed",explanation:"A stored import has an unexplained reconciliation difference and should not be treated as fully verified.",next_steps:["Review missing, duplicated or misread transactions and statement balances.","Do not rely on the affected period as complete until resolved."],evidence:{import_id:imp.id,account_id:imp.account_id,statement_start:imp.statement_start,statement_end:imp.statement_end,reconciliation_difference:imp.reconciliation_difference}});
+          }
+        }
+
+        if(rule.rule_type==="allocation_drift"){
+          const byCurrency=new Map<string,any[]>();
+          for(const x of investments.data??[])if(x.current_value!==null&&Number(x.current_value)>=0)byCurrency.set(x.currency,[...(byCurrency.get(x.currency)??[]),x]);
+          for(const target of targets.data??[]){
+            const rows=byCurrency.get(target.currency)??[]; const total=rows.reduce((s:any,x:any)=>s+Number(x.current_value),0); if(total<=0)continue;
+            let actualValue=0,label=target.dimension_value??"target";
+            if(target.dimension==="investment"){const x=rows.find((v:any)=>v.id===target.investment_id);actualValue=x?Number(x.current_value):0;label=x?.name??label;}
+            if(target.dimension==="investment_type"){actualValue=rows.filter((v:any)=>v.investment_type===target.dimension_value).reduce((s:any,x:any)=>s+Number(x.current_value),0);label=target.dimension_value;}
+            if(target.dimension==="symbol"){actualValue=rows.filter((v:any)=>v.symbol===target.dimension_value).reduce((s:any,x:any)=>s+Number(x.current_value),0);label=target.dimension_value;}
+            const actual=actualValue/total*100, drift=actual-Number(target.target_percent);
+            if(Math.abs(drift)>Number(target.tolerance_percent))await add({watch_rule_id:rule.id,profile_id:target.profile_id,transaction_id:null,finding_type:"investment_allocation_drift",severity:rule.severity??"notice",title:"Investment allocation drift: "+label,explanation:"The tracked allocation is outside the user-confirmed target tolerance. This is analytics, not a buy/sell recommendation.",next_steps:["Review whether the target still reflects your intended allocation and risk profile."],evidence:{target_id:target.id,dimension:target.dimension,label,currency:target.currency,target_percent:target.target_percent,actual_percent:Number(actual.toFixed(2)),drift_percent:Number(drift.toFixed(2)),tolerance_percent:target.tolerance_percent}});
           }
         }
 
