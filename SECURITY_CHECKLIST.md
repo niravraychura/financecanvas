@@ -42,6 +42,12 @@ A change is not considered complete until the relevant checks pass.
 - [ ] Older imports cannot move data-freshness dates backward.
 - [ ] Confirmed transaction batches are atomic (all-or-nothing).
 - [ ] Financial Inbox sensitive fields cannot persist blocked identifiers/secrets.
+- [ ] Source-document SHA-256 duplicate checks remain enforced when a hash is available.
+- [ ] Historical-balance answers distinguish exact/reconstructed/insufficient evidence.
+- [ ] Cross-workspace ownership/history/evidence operations remain scoped.
+- [ ] Financial preferences cannot store blocked secrets/identifiers.
+- [ ] Recommendation history remains clearly distinct from confirmed financial facts.
+- [ ] Watch handlers for subscription changes, spending anomalies, EMI changes, annual fees, reconciliation and allocation drift remain present.
 
 ## 5. Financial safety
 
