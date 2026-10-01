@@ -47,3 +47,21 @@ Do not mark a statement reconciled when a material unexplained difference remain
 ## Estimates
 
 Label estimates clearly and list assumptions. Estimated/simulated values must not become confirmed financial records unless the user later confirms the real event.
+
+
+## Historical account balance
+
+For a question such as "What was the balance on 15 March 2026?":
+
+1. Prefer a confirmed statement running balance (`balance_after`) on the target date.
+2. When multiple same-day rows exist, use the confirmed `source_sequence` to identify the final statement row.
+3. Otherwise reconstruct from the closest confirmed account-balance anchor plus/minus all confirmed transactions between the anchor and target date.
+4. For ordinary bank/cash/wallet accounts: credits increase balance and debits decrease it.
+5. For credit-card balances representing amount owed: debits/purchases increase the owed balance and credits/payments decrease it.
+6. Prefer a reconciled statement covering the target date as evidence.
+7. If transaction coverage/order cannot be proven, return "insufficient/ambiguous data" rather than guessing.
+
+Label the result:
+- exact from statement running balance;
+- reconstructed from a confirmed/reconciled anchor; or
+- insufficient/ambiguous.
