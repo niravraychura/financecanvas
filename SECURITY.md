@@ -52,3 +52,12 @@ When an explicitly authorized Supabase connector is available, use it instead of
 ## Incident response
 
 For suspected personal or financial data exposure: contain access, rotate affected credentials where applicable, preserve only necessary evidence, avoid placing raw secrets in incident records, determine notification obligations, and follow COMPLIANCE.md before production use.
+
+
+## Mandatory change review
+
+Every FinanceCanvas change requires the relevant review in [SECURITY_CHECKLIST.md](SECURITY_CHECKLIST.md).
+
+GitHub CI runs `scripts/security_check.py` on every push and pull request. Backend/schema/API changes additionally require Supabase security verification.
+
+A failed or BLOCKED security review means the change is not complete and must not be released.
