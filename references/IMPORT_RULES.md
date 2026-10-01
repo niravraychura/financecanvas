@@ -55,3 +55,22 @@ The summary should include:
 - reconciliation result;
 - sensitive information excluded/masked;
 - date/account/profile coverage.
+
+
+## Financial Inbox states
+
+An import can progress through:
+
+`received -> detected -> extracted -> validated -> needs_review -> confirmed -> committed -> completed`
+
+It may also be `cancelled` or `failed`.
+
+Use `extracted_fields` only for allowed, minimized structured values. Sensitive field names/values are rejected before persistence.
+
+Use `confirmation_queue` for unresolved ownership, category, correction, duplicate or extraction questions.
+
+## Atomic commit
+
+After final confirmation, the whole prepared transaction batch is committed through one database transaction.
+
+If any database insert in the prepared batch fails, the batch must roll back rather than leave a partially imported statement.
