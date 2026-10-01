@@ -17,6 +17,8 @@ Use these repository references when the task needs them:
 - `references/API_OPERATIONS.md` — approved controlled operations and runtime scopes
 - `references/DATA_MODEL.md` — workspace, household, ownership and financial-record relationships
 - `references/WATCH_RULES.md` — supported Watch types, configurations and scheduling behavior
+- `references/HISTORY_AND_EVIDENCE.md` — historical balances, evidence-aware answers, timeline and ownership views
+- `references/MEMORY_AND_RECOMMENDATIONS.md` — persistent preferences and recommendation history
 
 If a reference conflicts with a stricter rule in this Skill, follow the stricter rule.
 
@@ -124,8 +126,9 @@ Temporary input formats may include PDF, JPG/JPEG, PNG/screenshots, CSV, XLS/XLS
 For every import:
 
 1. Identify the document/data type.
-2. Identify likely owner/profile and account/institution.
-3. Run the sensitive-data classification before persistence and warn/redact/reject as required.
+2. When source bytes are accessible, compute a SHA-256 digest and call `check_import_hash` before import. If the same committed/completed source already exists, stop and show the existing import. Never persist the source bytes.
+3. Identify likely owner/profile and account/institution.
+4. Run the sensitive-data classification before persistence and warn/redact/reject as required.
 4. Extract only the minimum structured facts necessary for the user's stated purpose.
 5. Preserve meaningful raw text separately from normalized values only when it contains no prohibited secret or blocked identifier.
 6. Normalize merchant/category labels.
@@ -140,6 +143,10 @@ For every import:
 15. Do not intentionally store the source document in FinanceCanvas.
 
 If 47 records are clear and 3 need review, ask only about the 3 before final confirmation.
+
+When the statement contains a running-balance column, extract `balance_after`. When multiple transactions share the same date, preserve the statement row/order as `source_sequence`.
+
+After a successful import with enough transaction history, call `detect_recurring_patterns`. Present detected patterns as suggestions and ask before creating/updating recurring items or subscriptions.
 
 ## Statement reconciliation
 
@@ -208,6 +215,20 @@ FinanceCanvas data belongs to the user.
 - Do not claim that workspace erasure removes independent copies held by the chat/LLM host, Supabase platform backups/logs, banks, issuers, or other third parties.
 - In a future commercial deployment, respect applicable legal/security retention obligations before permanent erasure.
 
+## Historical balances and evidence-aware answers
+
+For questions such as "What was my XYZ Bank balance on 15 March 2026?", use `get_historical_balance`.
+
+- Prefer an exact confirmed running balance from the statement.
+- Otherwise reconstruct deterministically from a confirmed balance anchor and all confirmed intervening transactions.
+- Use statement sequence for multiple same-day transactions.
+- State whether the result is exact, reconstructed, or insufficient.
+- Never guess a historical balance from the current balance.
+
+For material historical/aggregate questions, use `get_evidence_bundle` or an equivalent controlled query and state the period, accounts/profiles included, data freshness, record count and important coverage/reconciliation limitations.
+
+Use `get_financial_timeline` for chronological financial history and `get_ownership_graph` for confirmed household/ownership relationships.
+
 ## Answering questions
 
 Prefer confirmed database facts and deterministic queries.
@@ -227,16 +248,16 @@ Watch rules can cover:
 - high-value transactions
 - fees, interest, forex markup and surcharges
 - duplicate charges
-- subscriptions/price changes
-- card utilization, due dates and annual fees
+- subscriptions/price changes and cancelled-subscription reappearance
+- card utilization, due dates, annual fees and waiver-progress context
 - refunds/reversals
 - loan/EMI changes
-- category spending anomalies
+- category spending anomalies against historical baselines
 - cash-flow risk
 - financial goals
-- investment concentration/allocation drift
+- investment concentration/allocation drift against user-confirmed targets
 - insurance renewals
-- reconciliation
+- reconciliation failures
 - stale/missing data
 
 Classify findings as INFO, NOTICE, WARNING, or CRITICAL.
@@ -261,6 +282,16 @@ Never promise real-time fraud detection unless a live data source and scheduler 
 When a user confirms a stable merchant alias, category, purpose, recurring family transfer, or similar mapping, save it through the controlled data layer so the same question is not repeatedly asked.
 
 Explicit user Watch rules override learned assumptions.
+
+## Financial memory and recommendation history
+
+Persist user-confirmed long-lived financial preferences through `upsert_financial_preference`, including emergency-fund policy, savings priorities, budgeting conventions, risk-profile wording, payment/card-strategy preferences and shared-expense rules when useful.
+
+Never store authentication secrets, blocked identifiers or bank/card credentials as preferences.
+
+Material recommendations may be stored through `record_recommendation` with evidence, assumptions, confidence and status. Recommendations remain AI interpretations/recommendations, not confirmed financial facts.
+
+If the user rejects/dismisses a recommendation, preserve that status and do not repeatedly present the same recommendation without materially new evidence.
 
 ## Financial scenarios
 
