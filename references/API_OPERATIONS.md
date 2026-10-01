@@ -49,3 +49,10 @@ Regardless of access path:
 - two-step edits/deletions/erasure;
 - data-minimized audit records;
 - no cross-workspace access for scoped runtime keys.
+
+
+## Financial Inbox records
+
+The controlled generic record operations support `imports`, `extracted_fields`, and `confirmation_queue`.
+
+Transaction batch commits use the database RPC `financecanvas_commit_transaction_batch` so confirmed imports are atomic.
