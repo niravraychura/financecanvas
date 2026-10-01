@@ -48,7 +48,7 @@ function differences(a:Record<string,any>,b:Record<string,any>){
     if(JSON.stringify(a[f]??null)!==JSON.stringify(b[f]??null)) out[f]={existing:a[f]??null,incoming:b[f]??null};
   return out;
 }
-const forbiddenKey=/(^|_)(cvv|cvc|pin|upi_pin|otp|password|passcode|secret|private_key|seed|mnemonic|recovery_phrase|aadhaar|aadhar|vid|card_number|full_card_number|account_number|api_key|access_token|refresh_token)($|_)/i;
+const forbiddenKey=/(^|_)(cvv|cvc|pin|upi_pin|otp|password|passcode|secret|private_key|seed|mnemonic|recovery_phrase|aadhaar|aadhar|vid|pan|passport|tax_id|card_number|full_card_number|account_number|api_key|access_token|refresh_token)($|_)/i;
 function luhnDigits(raw:string){
   const digits=raw.replace(/\D/g,""); if(digits.length<13||digits.length>19)return false;
   let sum=0, alt=false; for(let i=digits.length-1;i>=0;i--){let n=Number(digits[i]);if(alt){n*=2;if(n>9)n-=9}sum+=n;alt=!alt} return sum%10===0;
@@ -58,7 +58,7 @@ function redactCardNumbers(s:string){
 }
 function sanitizeString(s:string){
   const critical=/(?:cvv|cvc|otp|upi[ _-]?pin|atm[ _-]?pin|password|passcode|private[ _-]?key|seed[ _-]?phrase|recovery[ _-]?phrase|api[ _-]?key|access[ _-]?token|refresh[ _-]?token)\s*[:=]\s*\S+/i;
-  const govt=/(?:aadhaar|aadhar|vid|pan|passport)\s*[:=]\s*[A-Z0-9 -]{6,20}/i;
+  const govt=/(?:aadhaar|aadhar|vid|pan|passport)\s*[:=]\s*[A-Z0-9 -]{6,20}|\b[A-Z]{5}[0-9]{4}[A-Z]\b/i;
   const acct=/(?:account(?:[ _-]?number)?|a\/c)\s*[:=]\s*\d{6,20}/i;
   if(critical.test(s)){
     const e:any=new Error("Critical authentication/payment secret detected. FinanceCanvas will not persist this value.");
@@ -239,6 +239,9 @@ Deno.serve(async(req:Request)=>{
       if(!genericCreate.has(String(p.table))) throw new Error("Table not creatable through generic FinanceCanvas API");
       const clean={...(p.record??{})};
       delete clean.id; delete clean.created_at; delete clean.updated_at; delete clean.deleted_at;
+      if(p.table==="extracted_fields" && forbiddenKey.test(String(clean.field_key??""))){
+        throw Object.assign(new Error("Sensitive identifier/secret fields are not allowed in persisted extracted fields"),{status:422,code:"SENSITIVE_FIELD_NOT_ALLOWED"});
+      }
       if(p.table==="account_owners"){
         reqFields(clean,["account_id","profile_id"]);
         const a=await db.from("accounts").select("id").eq("id",clean.account_id).eq("workspace_id",p.workspace_id).single(); if(a.error) throw a.error;
