@@ -5,10 +5,10 @@ const cors = {
   "access-control-allow-headers": "authorization, content-type",
   "access-control-allow-methods": "POST, OPTIONS",
 };
-const editable = new Set(["workspaces","profiles","institutions","accounts","transactions","merchant_aliases","loans","insurance_policies","assets","liabilities","investments","subscriptions","goals","watch_rules","data_freshness"]);
-const deletable = new Set(["profiles","institutions","accounts","transactions","merchant_aliases","loans","insurance_policies","assets","liabilities","investments","subscriptions","goals","watch_rules"]);
-const genericCreate = new Set(["institutions","account_owners","transaction_splits","merchant_aliases","loans","loan_payments","insurance_policies","assets","liabilities","investments","investment_transactions","subscriptions","goals","correction_memory","data_freshness","processing_consents","sensitive_data_events","privacy_requests","breach_incidents"]);
-const genericList = new Set(["institutions","account_owners","transaction_splits","merchant_aliases","loans","loan_payments","insurance_policies","assets","liabilities","investments","investment_transactions","subscriptions","goals","correction_memory","duplicate_reviews","audit_log","watch_rules","watch_findings","data_freshness","processing_consents","sensitive_data_events","privacy_requests","breach_incidents","security_events"]);
+const editable = new Set(["workspaces","profiles","institutions","accounts","transactions","merchant_aliases","loans","insurance_policies","assets","liabilities","investments","subscriptions","goals","watch_rules","data_freshness","households","household_members","profile_relationships","asset_owners","liability_owners","loan_borrowers","account_balances","credit_card_statements","budgets","recurring_items","financial_snapshots"]);
+const deletable = new Set(["profiles","institutions","accounts","transactions","merchant_aliases","loans","insurance_policies","assets","liabilities","investments","subscriptions","goals","watch_rules","households","household_members","profile_relationships","asset_owners","liability_owners","loan_borrowers","account_balances","credit_card_statements","budgets","recurring_items","financial_snapshots"]);
+const genericCreate = new Set(["institutions","account_owners","transaction_splits","merchant_aliases","loans","loan_payments","insurance_policies","assets","liabilities","investments","investment_transactions","subscriptions","goals","correction_memory","data_freshness","processing_consents","sensitive_data_events","privacy_requests","breach_incidents","households","household_members","profile_relationships","asset_owners","liability_owners","loan_borrowers","account_balances","credit_card_statements","budgets","recurring_items","financial_snapshots"]);
+const genericList = new Set(["institutions","account_owners","transaction_splits","merchant_aliases","loans","loan_payments","insurance_policies","assets","liabilities","investments","investment_transactions","subscriptions","goals","correction_memory","duplicate_reviews","audit_log","watch_rules","watch_findings","data_freshness","processing_consents","sensitive_data_events","privacy_requests","breach_incidents","security_events","households","household_members","profile_relationships","asset_owners","liability_owners","loan_borrowers","account_balances","credit_card_statements","budgets","recurring_items","financial_snapshots"]);
 
 function respond(body: unknown, status=200) {
   return new Response(JSON.stringify(body), {status, headers:{...cors,"content-type":"application/json; charset=utf-8"}});
@@ -335,8 +335,17 @@ Deno.serve(async(req:Request)=>{
     }
     if(op==="get_financial_summary"){
       reqFields(p,["workspace_id"]);const ws=p.workspace_id;
-      const [a,l,ac,t]=await Promise.all([db.from("assets").select("value,currency").eq("workspace_id",ws).is("deleted_at",null),db.from("liabilities").select("outstanding_amount,currency").eq("workspace_id",ws).is("deleted_at",null),db.from("accounts").select("current_balance,currency,balance_as_of").eq("workspace_id",ws).is("deleted_at",null),db.from("transactions").select("amount,direction,category,posted_date,currency").eq("workspace_id",ws).is("deleted_at",null)]);
-      for(const r of [a,l,ac,t])if(r.error)throw r.error;return respond({assets:a.data??[],liabilities:l.data??[],accounts:ac.data??[],transactions:t.data??[],note:"Calculate totals deterministically and do not combine currencies without an explicit FX source."});
+      const [a,l,ac,t,bg,ri,sn]=await Promise.all([
+        db.from("assets").select("value,currency").eq("workspace_id",ws).is("deleted_at",null),
+        db.from("liabilities").select("outstanding_amount,currency").eq("workspace_id",ws).is("deleted_at",null),
+        db.from("accounts").select("current_balance,currency,balance_as_of").eq("workspace_id",ws).is("deleted_at",null),
+        db.from("transactions").select("amount,direction,category,posted_date,currency").eq("workspace_id",ws).is("deleted_at",null),
+        db.from("budgets").select("*").eq("workspace_id",ws).is("deleted_at",null).eq("status","active"),
+        db.from("recurring_items").select("*").eq("workspace_id",ws).is("deleted_at",null).eq("enabled",true),
+        db.from("financial_snapshots").select("*").eq("workspace_id",ws).is("deleted_at",null).order("snapshot_date",{ascending:false}).limit(24)
+      ]);
+      for(const r of [a,l,ac,t,bg,ri,sn])if(r.error)throw r.error;
+      return respond({assets:a.data??[],liabilities:l.data??[],accounts:ac.data??[],transactions:t.data??[],budgets:bg.data??[],recurring_items:ri.data??[],financial_snapshots:sn.data??[],note:"Calculate totals deterministically and do not combine currencies without an explicit FX source."});
     }
     if(op==="create_watch_rule"){
       reqFields(p,["workspace_id","name","rule_type"]);const row={workspace_id:p.workspace_id,profile_id:p.profile_id??null,name:p.name,rule_type:p.rule_type,cadence:p.cadence??null,severity:p.severity??"notice",configuration:p.configuration??{},enabled:p.enabled??true};
@@ -382,14 +391,14 @@ Deno.serve(async(req:Request)=>{
       return respond({erased:true,workspace_id:p.workspace_id});
     }
     if(op==="export_workspace_json"){
-      reqFields(p,["workspace_id"]);const tables=["workspaces","profiles","institutions","accounts","imports","transactions","transaction_splits","merchant_aliases","loans","loan_payments","insurance_policies","assets","liabilities","investments","investment_transactions","subscriptions","goals","correction_memory","duplicate_reviews","audit_log","watch_rules","watch_findings","data_freshness"], out:Record<string,any>={};
+      reqFields(p,["workspace_id"]);const tables=["workspaces","profiles","institutions","accounts","imports","transactions","transaction_splits","merchant_aliases","loans","loan_payments","insurance_policies","assets","liabilities","investments","investment_transactions","subscriptions","goals","correction_memory","duplicate_reviews","audit_log","watch_rules","watch_findings","data_freshness","households","household_members","profile_relationships","asset_owners","liability_owners","loan_borrowers","account_balances","credit_card_statements","budgets","recurring_items","financial_snapshots","processing_consents","sensitive_data_events","privacy_requests","breach_incidents"], out:Record<string,any>={};
       for(const table of tables){let q=db.from(table).select("*");q=table==="workspaces"?q.eq("id",p.workspace_id):q.eq("workspace_id",p.workspace_id);const r=await q;if(r.error)throw r.error;out[table]=r.data??[]}
       const owners=await db.from("account_owners").select("*,accounts!inner(workspace_id)").eq("accounts.workspace_id",p.workspace_id); if(owners.error) throw owners.error; out.account_owners=owners.data??[];
       return respond({schema_version:"0.1.0",exported_at:new Date().toISOString(),workspace_id:p.workspace_id,data:out});
     }
     if(op==="export_workspace_csv"){
       reqFields(p,["workspace_id"]);
-      const tables=["profiles","institutions","accounts","imports","transactions","transaction_splits","merchant_aliases","loans","loan_payments","insurance_policies","assets","liabilities","investments","investment_transactions","subscriptions","goals","correction_memory","duplicate_reviews","audit_log","watch_rules","watch_findings","data_freshness"];
+      const tables=["profiles","institutions","accounts","imports","transactions","transaction_splits","merchant_aliases","loans","loan_payments","insurance_policies","assets","liabilities","investments","investment_transactions","subscriptions","goals","correction_memory","duplicate_reviews","audit_log","watch_rules","watch_findings","data_freshness","households","household_members","profile_relationships","asset_owners","liability_owners","loan_borrowers","account_balances","credit_card_statements","budgets","recurring_items","financial_snapshots","processing_consents","sensitive_data_events","privacy_requests","breach_incidents"];
       const files:Record<string,string>={};
       const w=await db.from("workspaces").select("*").eq("id",p.workspace_id); if(w.error)throw w.error; files["workspaces.csv"]=rowsToCsv(w.data??[]);
       for(const table of tables){const r=await db.from(table).select("*").eq("workspace_id",p.workspace_id);if(r.error)throw r.error;files[table+".csv"]=rowsToCsv(r.data??[])}
