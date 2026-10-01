@@ -3,6 +3,12 @@
 ## 0.1.0 - 2026-10-01
 
 Initial FinanceCanvas release:
+- Security review gate required after every change
+- Automated repository secret/sensitive-file/runtime-guardrail scanner in CI
+- Threat model, retention policy, incident-response and release checklists
+- Workspace-scoped and scope-limited external API keys
+- JSON/CSV structured export and two-step workspace erasure
+- Exact runtime dependency pinning
 - portable SKILL.md
 - multi-profile/workspace data model
 - structured-data-only persistence
