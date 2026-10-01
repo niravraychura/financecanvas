@@ -26,6 +26,12 @@ FinanceCanvas can organize and reason over structured data for:
 - budgets and recurring financial items
 - historical financial snapshots
 - financial alerts and anomaly checks
+- historical balance reconstruction from statement running balances or confirmed anchors
+- automatic recurring-pattern discovery
+- subscription price/reappearance checks
+- persistent financial preferences and recommendation history
+- evidence bundles, financial timeline and ownership graph
+- source-document SHA-256 duplicate protection
 
 ## Architecture
 
