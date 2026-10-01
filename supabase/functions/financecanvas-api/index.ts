@@ -5,10 +5,10 @@ const cors = {
   "access-control-allow-headers": "authorization, content-type",
   "access-control-allow-methods": "POST, OPTIONS",
 };
-const editable = new Set(["workspaces","profiles","institutions","accounts","transactions","merchant_aliases","loans","insurance_policies","assets","liabilities","investments","subscriptions","goals","watch_rules","data_freshness","households","household_members","profile_relationships","asset_owners","liability_owners","loan_borrowers","account_balances","credit_card_statements","budgets","recurring_items","financial_snapshots"]);
-const deletable = new Set(["profiles","institutions","accounts","transactions","merchant_aliases","loans","insurance_policies","assets","liabilities","investments","subscriptions","goals","watch_rules","households","household_members","profile_relationships","asset_owners","liability_owners","loan_borrowers","account_balances","credit_card_statements","budgets","recurring_items","financial_snapshots"]);
-const genericCreate = new Set(["institutions","account_owners","transaction_splits","merchant_aliases","loans","loan_payments","insurance_policies","assets","liabilities","investments","investment_transactions","subscriptions","goals","correction_memory","data_freshness","processing_consents","sensitive_data_events","privacy_requests","breach_incidents","households","household_members","profile_relationships","asset_owners","liability_owners","loan_borrowers","account_balances","credit_card_statements","budgets","recurring_items","financial_snapshots"]);
-const genericList = new Set(["institutions","account_owners","transaction_splits","merchant_aliases","loans","loan_payments","insurance_policies","assets","liabilities","investments","investment_transactions","subscriptions","goals","correction_memory","duplicate_reviews","audit_log","watch_rules","watch_findings","data_freshness","processing_consents","sensitive_data_events","privacy_requests","breach_incidents","security_events","households","household_members","profile_relationships","asset_owners","liability_owners","loan_borrowers","account_balances","credit_card_statements","budgets","recurring_items","financial_snapshots"]);
+const editable = new Set(["workspaces","profiles","institutions","accounts","transactions","merchant_aliases","loans","insurance_policies","assets","liabilities","investments","subscriptions","goals","watch_rules","data_freshness","households","household_members","profile_relationships","asset_owners","liability_owners","loan_borrowers","account_balances","credit_card_statements","budgets","recurring_items","financial_snapshots","imports","extracted_fields","confirmation_queue"]);
+const deletable = new Set(["profiles","institutions","accounts","transactions","merchant_aliases","loans","insurance_policies","assets","liabilities","investments","subscriptions","goals","watch_rules","households","household_members","profile_relationships","asset_owners","liability_owners","loan_borrowers","account_balances","credit_card_statements","budgets","recurring_items","financial_snapshots","imports","extracted_fields","confirmation_queue"]);
+const genericCreate = new Set(["institutions","account_owners","transaction_splits","merchant_aliases","loans","loan_payments","insurance_policies","assets","liabilities","investments","investment_transactions","subscriptions","goals","correction_memory","data_freshness","processing_consents","sensitive_data_events","privacy_requests","breach_incidents","households","household_members","profile_relationships","asset_owners","liability_owners","loan_borrowers","account_balances","credit_card_statements","budgets","recurring_items","financial_snapshots","imports","extracted_fields","confirmation_queue"]);
+const genericList = new Set(["institutions","account_owners","transaction_splits","merchant_aliases","loans","loan_payments","insurance_policies","assets","liabilities","investments","investment_transactions","subscriptions","goals","correction_memory","duplicate_reviews","audit_log","watch_rules","watch_findings","data_freshness","processing_consents","sensitive_data_events","privacy_requests","breach_incidents","security_events","households","household_members","profile_relationships","asset_owners","liability_owners","loan_borrowers","account_balances","credit_card_statements","budgets","recurring_items","financial_snapshots","imports","extracted_fields","confirmation_queue"]);
 
 function respond(body: unknown, status=200) {
   return new Response(JSON.stringify(body), {status, headers:{...cors,"content-type":"application/json; charset=utf-8"}});
@@ -151,6 +151,8 @@ async function validateGenericRefs(db:any,table:string,row:any,ws:string){
   if(table==="loan_borrowers"){await one("loans",row.loan_id);await one("profiles",row.profile_id);}
   if(["account_balances","credit_card_statements"].includes(table)){await one("accounts",row.account_id);await one("imports",row.import_id);}
   if(table==="recurring_items"){await one("profiles",row.profile_id);await one("accounts",row.account_id);}
+  if(table==="imports"){await one("profiles",row.profile_id);await one("accounts",row.account_id);}
+  if(["extracted_fields","confirmation_queue"].includes(table))await one("imports",row.import_id);
 }
 async function nearMatches(db:any, ws:string, t:Record<string,any>) {
   const d=new Date(t.posted_date+"T00:00:00Z"), lo=new Date(d), hi=new Date(d);
@@ -280,52 +282,98 @@ Deno.serve(async(req:Request)=>{
     if(op==="commit_transactions"){
       reqFields(p,["workspace_id","transactions","final_confirmation"]);
       if(p.final_confirmation!==true)return respond({error:"Final user confirmation is required before commit."},409);
+
       const resolutions=new Map((p.duplicate_resolutions??[]).map((r:any)=>[String(r.client_id),r]));
       const commitRows=p.transactions as Record<string,any>[];
       await assertIdsInWorkspace(db,"accounts",commitRows.map(x=>x.account_id),p.workspace_id);
       await assertIdsInWorkspace(db,"profiles",commitRows.map(x=>x.profile_id),p.workspace_id);
       await assertIdsInWorkspace(db,"imports",commitRows.map(x=>x.import_id),p.workspace_id);
-      const inserted=[],skipped=[],conflicts=[];
+
+      const prepared:any[]=[],reviews:any[]=[],skipped:any[]=[],conflicts:any[]=[];
+
       for(const src of commitRows){
-        const t={...src,workspace_id:p.workspace_id}, client=String(src.client_id??"");reqFields(t,["account_id","posted_date","amount","direction"]);
-        const base=await fp(t), ex=await db.from("transactions").select("*").eq("workspace_id",p.workspace_id).eq("base_fingerprint",base).is("deleted_at",null).limit(1);if(ex.error)throw ex.error;
+        const t={...src,workspace_id:p.workspace_id}, client=String(src.client_id??"");
+        reqFields(t,["account_id","posted_date","amount","direction"]);
+        const base=await fp(t);
+        const ex=await db.from("transactions").select("*").eq("workspace_id",p.workspace_id).eq("base_fingerprint",base).is("deleted_at",null).limit(1);
+        if(ex.error)throw ex.error;
+
         let fingerprint=base, duplicateOf=null, overrideReason=null;
+
         if(ex.data?.length){
-          const r:any=resolutions.get(client);
-          if(!r){conflicts.push({client_id:client,type:"exact",existing:ex.data[0]});continue}
+          const existing=ex.data[0], r:any=resolutions.get(client);
+          if(!r){conflicts.push({client_id:client,type:"exact",existing});continue;}
           if(["skip","keep_existing","cancel"].includes(r.decision)){
-            await db.from("duplicate_reviews").insert({workspace_id:p.workspace_id,existing_transaction_id:ex.data[0].id,incoming_fingerprint:base,duplicate_type:"exact",decision:r.decision==="cancel"?"cancel":"skip",reason:r.reason??null,incoming_snapshot:t,difference:differences(ex.data[0],t)});
+            reviews.push({existing_transaction_id:existing.id,incoming_fingerprint:base,duplicate_type:"exact",decision:r.decision==="cancel"?"cancel":"skip",reason:r.reason??null,incoming_snapshot:auditSafe(t),difference:differences(existing,t)});
             skipped.push({client_id:client,reason:r.decision});continue;
           }
-          if(r.decision!=="add_separate"||!String(r.reason??"").trim()){conflicts.push({client_id:client,type:"exact",message:"add_separate requires a reason"});continue}
-          duplicateOf=ex.data[0].id;overrideReason=String(r.reason).trim();fingerprint=await sha256(base+"|override|"+overrideReason+"|"+crypto.randomUUID());
-          await db.from("duplicate_reviews").insert({workspace_id:p.workspace_id,existing_transaction_id:duplicateOf,incoming_fingerprint:base,duplicate_type:"exact",decision:"add_separate",reason:overrideReason,incoming_snapshot:t,difference:differences(ex.data[0],t)});
+          if(r.decision!=="add_separate"||!String(r.reason??"").trim()){
+            conflicts.push({client_id:client,type:"exact",message:"add_separate requires a reason"});continue;
+          }
+          duplicateOf=existing.id;
+          overrideReason=String(r.reason).trim();
+          fingerprint=await sha256(base+"|override|"+overrideReason+"|"+crypto.randomUUID());
+          reviews.push({existing_transaction_id:duplicateOf,incoming_fingerprint:base,duplicate_type:"exact",decision:"add_separate",reason:overrideReason,incoming_snapshot:auditSafe(t),difference:differences(existing,t)});
         } else {
           const near=await nearMatches(db,p.workspace_id,t);
           if(near.length){
-            const r:any=resolutions.get(client);
-            if(!r){conflicts.push({client_id:client,type:"near",matches:near.map((x:any)=>({existing:x,difference:differences(x,t)}))});continue}
+            const existing=near[0], r:any=resolutions.get(client);
+            if(!r){conflicts.push({client_id:client,type:"near",matches:near.map((x:any)=>({existing:x,difference:differences(x,t)}))});continue;}
             if(["skip","keep_existing","cancel"].includes(r.decision)){
-              await db.from("duplicate_reviews").insert({workspace_id:p.workspace_id,existing_transaction_id:near[0].id,incoming_fingerprint:base,duplicate_type:"near",decision:r.decision==="cancel"?"cancel":"keep_existing",reason:r.reason??null,incoming_snapshot:t,difference:differences(near[0],t)});
+              reviews.push({existing_transaction_id:existing.id,incoming_fingerprint:base,duplicate_type:"near",decision:r.decision==="cancel"?"cancel":"keep_existing",reason:r.reason??null,incoming_snapshot:auditSafe(t),difference:differences(existing,t)});
               skipped.push({client_id:client,reason:r.decision});continue;
             }
-            if(r.decision==="update_existing"){conflicts.push({client_id:client,type:"near",message:"Use request_edit then confirm_pending_operation to update existing.",existing:near[0]});continue}
-            if(r.decision!=="add_separate"||!String(r.reason??"").trim()){conflicts.push({client_id:client,type:"near",message:"add_separate requires a reason"});continue}
-            duplicateOf=near[0].id;overrideReason=String(r.reason).trim();
-            await db.from("duplicate_reviews").insert({workspace_id:p.workspace_id,existing_transaction_id:duplicateOf,incoming_fingerprint:base,duplicate_type:"near",decision:"add_separate",reason:overrideReason,incoming_snapshot:t,difference:differences(near[0],t)});
+            if(r.decision==="update_existing"){
+              conflicts.push({client_id:client,type:"near",message:"Use request_edit then confirm_pending_operation to update existing.",existing});continue;
+            }
+            if(r.decision!=="add_separate"||!String(r.reason??"").trim()){
+              conflicts.push({client_id:client,type:"near",message:"add_separate requires a reason"});continue;
+            }
+            duplicateOf=existing.id;
+            overrideReason=String(r.reason).trim();
+            reviews.push({existing_transaction_id:duplicateOf,incoming_fingerprint:base,duplicate_type:"near",decision:"add_separate",reason:overrideReason,incoming_snapshot:auditSafe(t),difference:differences(existing,t)});
           }
         }
-        const row={workspace_id:p.workspace_id,profile_id:t.profile_id??null,account_id:t.account_id,import_id:t.import_id??null,posted_date:t.posted_date,transaction_date:t.transaction_date??null,amount:t.amount,currency:String(t.currency??"INR").toUpperCase(),direction:t.direction,raw_description:t.raw_description??null,merchant_normalized:t.merchant_normalized??null,transaction_reference:t.transaction_reference??null,category:t.category??null,subcategory:t.subcategory??null,purpose:t.purpose??null,confidence:t.confidence??null,confirmation_status:t.confirmation_status??"confirmed",raw_values:t.raw_values??{},normalized_values:t.normalized_values??{},base_fingerprint:base,fingerprint,duplicate_of_transaction_id:duplicateOf,duplicate_override_reason:overrideReason,duplicate_override_at:overrideReason?new Date().toISOString():null};
-        const {data,error}=await db.from("transactions").insert(row).select().single();if(error){if(String(error.code)==="23505"){conflicts.push({client_id:client,type:"exact_database_constraint"});continue}throw error}
-        inserted.push(data);
-        await db.from("audit_log").insert({workspace_id:p.workspace_id,action:overrideReason?"create_transaction_duplicate_override":"create_transaction",target_table:"transactions",target_id:data.id,after_snapshot:auditSafe(data),reason:overrideReason});
-        const fr=await db.from("data_freshness").select("confirmed_through").eq("workspace_id",p.workspace_id).eq("account_id",t.account_id).maybeSingle();
-        if(fr.error) throw fr.error;
-        const confirmedThrough=(!fr.data?.confirmed_through || String(t.posted_date)>String(fr.data.confirmed_through)) ? t.posted_date : fr.data.confirmed_through;
-        const fu=await db.from("data_freshness").upsert({workspace_id:p.workspace_id,account_id:t.account_id,confirmed_through:confirmedThrough,last_import_at:new Date().toISOString()},{onConflict:"workspace_id,account_id"});
-        if(fu.error) throw fu.error;
+
+        prepared.push({
+          workspace_id:p.workspace_id,
+          profile_id:t.profile_id??null,
+          account_id:t.account_id,
+          import_id:t.import_id??null,
+          posted_date:t.posted_date,
+          transaction_date:t.transaction_date??null,
+          amount:t.amount,
+          currency:String(t.currency??"INR").toUpperCase(),
+          direction:t.direction,
+          raw_description:t.raw_description??null,
+          merchant_normalized:t.merchant_normalized??null,
+          transaction_reference:t.transaction_reference??null,
+          category:t.category??null,
+          subcategory:t.subcategory??null,
+          purpose:t.purpose??null,
+          confidence:t.confidence??null,
+          confirmation_status:t.confirmation_status??"confirmed",
+          raw_values:t.raw_values??{},
+          normalized_values:t.normalized_values??{},
+          base_fingerprint:base,
+          fingerprint,
+          duplicate_of_transaction_id:duplicateOf,
+          duplicate_override_reason:overrideReason,
+          duplicate_override_at:overrideReason?new Date().toISOString():null
+        });
       }
-      return respond({inserted,skipped,conflicts},conflicts.length?409:200);
+
+      if(conflicts.length)return respond({inserted:[],skipped,conflicts,atomic_commit:false},409);
+
+      const rpc=await db.rpc("financecanvas_commit_transaction_batch",{p_workspace_id:p.workspace_id,p_rows:prepared,p_reviews:reviews});
+      if(rpc.error)throw rpc.error;
+      const ids=(rpc.data?.inserted_ids??[]) as string[];
+      let inserted:any[]=[];
+      if(ids.length){
+        const q=await db.from("transactions").select("*").eq("workspace_id",p.workspace_id).in("id",ids);
+        if(q.error)throw q.error; inserted=q.data??[];
+      }
+      return respond({inserted,skipped,conflicts:[],atomic_commit:true,batch_result:rpc.data});
     }
     if(op==="search_transactions"){
       reqFields(p,["workspace_id"]);let q=db.from("transactions").select("*").eq("workspace_id",p.workspace_id).is("deleted_at",null).order("posted_date",{ascending:false}).limit(Math.min(Number(p.limit??100),500));
@@ -568,14 +616,14 @@ Deno.serve(async(req:Request)=>{
       return respond({erased:true,workspace_id:p.workspace_id});
     }
     if(op==="export_workspace_json"){
-      reqFields(p,["workspace_id"]);const tables=["workspaces","profiles","institutions","accounts","imports","transactions","transaction_splits","merchant_aliases","loans","loan_payments","insurance_policies","assets","liabilities","investments","investment_transactions","subscriptions","goals","correction_memory","duplicate_reviews","audit_log","watch_rules","watch_findings","data_freshness","households","household_members","profile_relationships","asset_owners","liability_owners","loan_borrowers","account_balances","credit_card_statements","budgets","recurring_items","financial_snapshots","processing_consents","sensitive_data_events","privacy_requests","breach_incidents"], out:Record<string,any>={};
+      reqFields(p,["workspace_id"]);const tables=["workspaces","profiles","institutions","accounts","imports","transactions","transaction_splits","merchant_aliases","loans","loan_payments","insurance_policies","assets","liabilities","investments","investment_transactions","subscriptions","goals","correction_memory","duplicate_reviews","audit_log","watch_rules","watch_findings","data_freshness","households","household_members","profile_relationships","asset_owners","liability_owners","loan_borrowers","account_balances","credit_card_statements","budgets","recurring_items","financial_snapshots","processing_consents","sensitive_data_events","privacy_requests","breach_incidents","extracted_fields","confirmation_queue"], out:Record<string,any>={};
       for(const table of tables){let q=db.from(table).select("*");q=table==="workspaces"?q.eq("id",p.workspace_id):q.eq("workspace_id",p.workspace_id);const r=await q;if(r.error)throw r.error;out[table]=r.data??[]}
       const owners=await db.from("account_owners").select("*,accounts!inner(workspace_id)").eq("accounts.workspace_id",p.workspace_id); if(owners.error) throw owners.error; out.account_owners=owners.data??[];
       return respond({schema_version:"0.1.0",exported_at:new Date().toISOString(),workspace_id:p.workspace_id,data:out});
     }
     if(op==="export_workspace_csv"){
       reqFields(p,["workspace_id"]);
-      const tables=["profiles","institutions","accounts","imports","transactions","transaction_splits","merchant_aliases","loans","loan_payments","insurance_policies","assets","liabilities","investments","investment_transactions","subscriptions","goals","correction_memory","duplicate_reviews","audit_log","watch_rules","watch_findings","data_freshness","households","household_members","profile_relationships","asset_owners","liability_owners","loan_borrowers","account_balances","credit_card_statements","budgets","recurring_items","financial_snapshots","processing_consents","sensitive_data_events","privacy_requests","breach_incidents"];
+      const tables=["profiles","institutions","accounts","imports","transactions","transaction_splits","merchant_aliases","loans","loan_payments","insurance_policies","assets","liabilities","investments","investment_transactions","subscriptions","goals","correction_memory","duplicate_reviews","audit_log","watch_rules","watch_findings","data_freshness","households","household_members","profile_relationships","asset_owners","liability_owners","loan_borrowers","account_balances","credit_card_statements","budgets","recurring_items","financial_snapshots","processing_consents","sensitive_data_events","privacy_requests","breach_incidents","extracted_fields","confirmation_queue"];
       const files:Record<string,string>={};
       const w=await db.from("workspaces").select("*").eq("id",p.workspace_id); if(w.error)throw w.error; files["workspaces.csv"]=rowsToCsv(w.data??[]);
       for(const table of tables){const r=await db.from(table).select("*").eq("workspace_id",p.workspace_id);if(r.error)throw r.error;files[table+".csv"]=rowsToCsv(r.data??[])}
