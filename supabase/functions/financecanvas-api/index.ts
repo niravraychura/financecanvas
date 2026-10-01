@@ -7,6 +7,8 @@ const cors = {
 };
 const editable = new Set(["workspaces","profiles","institutions","accounts","transactions","merchant_aliases","loans","insurance_policies","assets","liabilities","investments","subscriptions","goals","watch_rules","data_freshness"]);
 const deletable = new Set(["profiles","institutions","accounts","transactions","merchant_aliases","loans","insurance_policies","assets","liabilities","investments","subscriptions","goals","watch_rules"]);
+const genericCreate = new Set(["institutions","account_owners","transaction_splits","merchant_aliases","loans","loan_payments","insurance_policies","assets","liabilities","investments","investment_transactions","subscriptions","goals","correction_memory","data_freshness"]);
+const genericList = new Set(["institutions","account_owners","transaction_splits","merchant_aliases","loans","loan_payments","insurance_policies","assets","liabilities","investments","investment_transactions","subscriptions","goals","correction_memory","duplicate_reviews","audit_log","watch_rules","watch_findings","data_freshness"]);
 
 function respond(body: unknown, status=200) {
   return new Response(JSON.stringify(body), {status, headers:{...cors,"content-type":"application/json; charset=utf-8"}});
@@ -119,6 +121,34 @@ Deno.serve(async(req:Request)=>{
       await db.from("audit_log").insert({workspace_id:p.workspace_id,action:"create_account",target_table:"accounts",target_id:data.id,after_snapshot:data});
       return respond({account:data});
     }
+    if(op==="create_record"){
+      reqFields(p,["workspace_id","table","record"]);
+      if(!genericCreate.has(String(p.table))) throw new Error("Table not creatable through generic FinanceCanvas API");
+      const clean={...(p.record??{})};
+      delete clean.id; delete clean.created_at; delete clean.updated_at; delete clean.deleted_at;
+      if(p.table==="account_owners"){
+        reqFields(clean,["account_id","profile_id"]);
+        const a=await db.from("accounts").select("id").eq("id",clean.account_id).eq("workspace_id",p.workspace_id).single(); if(a.error) throw a.error;
+        const pr=await db.from("profiles").select("id").eq("id",clean.profile_id).eq("workspace_id",p.workspace_id).single(); if(pr.error) throw pr.error;
+      } else {
+        clean.workspace_id=p.workspace_id;
+      }
+      const r=await db.from(String(p.table)).insert(clean).select().single(); if(r.error) throw r.error;
+      await db.from("audit_log").insert({workspace_id:p.workspace_id,action:"create_"+p.table,target_table:p.table,target_id:r.data.id??null,after_snapshot:r.data});
+      return respond({record:r.data});
+    }
+    if(op==="list_records"){
+      reqFields(p,["workspace_id","table"]);
+      if(!genericList.has(String(p.table))) throw new Error("Table not listable through generic FinanceCanvas API");
+      let q;
+      if(p.table==="account_owners"){
+        q=db.from("account_owners").select("*,accounts!inner(workspace_id)").eq("accounts.workspace_id",p.workspace_id);
+      } else {
+        q=db.from(String(p.table)).select("*").eq("workspace_id",p.workspace_id);
+      }
+      const r=await q.limit(Math.min(Number(p.limit??200),500)); if(r.error) throw r.error;
+      return respond({records:r.data??[]});
+    }
     if(op==="preview_transaction_import"){
       reqFields(p,["workspace_id","transactions"]);const results=[];
       for(const src of p.transactions as Record<string,any>[]){
@@ -169,7 +199,11 @@ Deno.serve(async(req:Request)=>{
         const {data,error}=await db.from("transactions").insert(row).select().single();if(error){if(String(error.code)==="23505"){conflicts.push({client_id:client,type:"exact_database_constraint"});continue}throw error}
         inserted.push(data);
         await db.from("audit_log").insert({workspace_id:p.workspace_id,action:overrideReason?"create_transaction_duplicate_override":"create_transaction",target_table:"transactions",target_id:data.id,after_snapshot:data,reason:overrideReason});
-        await db.from("data_freshness").upsert({workspace_id:p.workspace_id,account_id:t.account_id,confirmed_through:t.posted_date,last_import_at:new Date().toISOString()},{onConflict:"workspace_id,account_id"});
+        const fr=await db.from("data_freshness").select("confirmed_through").eq("workspace_id",p.workspace_id).eq("account_id",t.account_id).maybeSingle();
+        if(fr.error) throw fr.error;
+        const confirmedThrough=(!fr.data?.confirmed_through || String(t.posted_date)>String(fr.data.confirmed_through)) ? t.posted_date : fr.data.confirmed_through;
+        const fu=await db.from("data_freshness").upsert({workspace_id:p.workspace_id,account_id:t.account_id,confirmed_through:confirmedThrough,last_import_at:new Date().toISOString()},{onConflict:"workspace_id,account_id"});
+        if(fu.error) throw fu.error;
       }
       return respond({inserted,skipped,conflicts},conflicts.length?409:200);
     }
@@ -250,6 +284,7 @@ Deno.serve(async(req:Request)=>{
     if(op==="export_workspace_json"){
       reqFields(p,["workspace_id"]);const tables=["workspaces","profiles","institutions","accounts","imports","transactions","transaction_splits","merchant_aliases","loans","loan_payments","insurance_policies","assets","liabilities","investments","investment_transactions","subscriptions","goals","correction_memory","duplicate_reviews","audit_log","watch_rules","watch_findings","data_freshness"], out:Record<string,any>={};
       for(const table of tables){let q=db.from(table).select("*");q=table==="workspaces"?q.eq("id",p.workspace_id):q.eq("workspace_id",p.workspace_id);const r=await q;if(r.error)throw r.error;out[table]=r.data??[]}
+      const owners=await db.from("account_owners").select("*,accounts!inner(workspace_id)").eq("accounts.workspace_id",p.workspace_id); if(owners.error) throw owners.error; out.account_owners=owners.data??[];
       return respond({schema_version:"0.1.0",exported_at:new Date().toISOString(),workspace_id:p.workspace_id,data:out});
     }
     return respond({error:"Unknown operation: "+op},404);
