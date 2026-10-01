@@ -80,3 +80,36 @@ FinanceCanvas also creates stale-data findings when an account is older than its
 Saving a Watch rule does not create background execution.
 
 If the host has an authorized scheduler/automation, schedule the Watch check at the user-requested cadence. Otherwise state clearly that the rule runs only when FinanceCanvas is invoked.
+
+
+## subscription_change
+Detects material changes between expected recurring/subscription amounts and recent matching debits. It also flags a matching debit for a subscription stored as cancelled.
+
+Example:
+```json
+{"threshold_percent": 10}
+```
+
+## spending_anomaly
+Compares recent confirmed category spending with a prior daily baseline and flags material increases.
+
+Example:
+```json
+{"current_days": 30, "baseline_days": 90, "increase_percent": 50, "minimum_amount": 1000}
+```
+
+This is an anomaly signal, not proof of fraud or overspending.
+
+## loan_emi_change
+Compares the latest recorded loan payment with the stored EMI, or with the prior payment when no EMI is stored.
+
+## annual_fee_watch
+Uses a card's stored annual fee, next fee date and optional waiver-spend threshold. Tracked card spend is informational; issuer eligibility/exclusions must still be verified.
+
+## reconciliation_watch
+Flags imports whose stored statement reconciliation status is failed.
+
+## allocation_drift
+Compares tracked investment values with user-confirmed allocation targets and tolerance.
+
+This is allocation analytics, not a securities buy/sell recommendation.
