@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Run tests
+        run: python -m unittest discover -s tests -v
+      - name: Reject common committed secret/data files
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git ls-files | grep -E '(^|/)(\.env|.*\.pem|.*\.p12|.*\.pfx|.*\.sqlite3?|.*\.db)$' | grep -v '^\.env\.example$'; then
+            echo 'Potential secret/data file is tracked.' >&2
+            exit 1
+          fi
+      - name: Scan tracked text for obvious Supabase secret-key patterns
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git grep -nE '(service_role|sb_secret_)[A-Za-z0-9._-]{16,}' -- . ':!README.md' ':!SECURITY.md' ':!.env.example'; then
+            echo 'Potential Supabase secret detected.' >&2
+            exit 1
+          fi
