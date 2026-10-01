@@ -26,6 +26,8 @@ Account/card identifiers are masked/final-four only.
 ## Transactions and imports
 
 - imports
+- extracted_fields
+- confirmation_queue
 - transactions
 - transaction_splits
 - merchant_aliases
