@@ -129,6 +129,40 @@ Verify the function reports **ACTIVE**.
 
 ## 5. Choose your access mode
 
+### Creating the first temporary bootstrap key
+
+You only need this when you want to exercise the restricted Edge Function/API and there is no existing FinanceCanvas API key.
+
+Generate it **locally**:
+
+```bash
+python scripts/generate_api_key.py \
+  --label bootstrap-install \
+  --scopes admin,read,write,watch,export
+```
+
+Do not provide `--workspace-id` for this one-time bootstrap key.
+
+The helper prints:
+
+1. the plaintext `fc_...` token once;
+2. its SHA-256 hash;
+3. an `INSERT` statement containing the hash only.
+
+Run only that generated SQL through your trusted owner/admin Supabase connection.
+
+Store the plaintext bootstrap token only in a temporary local/host secret store.
+
+Use it to:
+
+- run the synthetic acceptance test;
+- initialize the first workspace if the chosen client path requires the Edge Function;
+- create a workspace-scoped runtime key.
+
+**Then revoke/delete the bootstrap key.** Do not keep an unscoped admin FinanceCanvas key for normal use.
+
+If you are only using an authorized owner Supabase connector for maintenance and do not need the Edge API yet, skip this step entirely.
+
 ### Mode 1 — connector-first owner/personal maintenance
 
 If your AI host already has an explicitly authorized Supabase connector and you are the owner/developer, no local FinanceCanvas secret is required for maintenance.
@@ -209,7 +243,7 @@ The acceptance script:
 
 No real financial data is used.
 
-After the test, revoke/delete the bootstrap key unless you deliberately need it for installation administration.
+After the test, revoke/delete the bootstrap key. If additional installation administration is still required, keep it only for that short task and revoke it immediately afterward. Normal runtime should use a workspace-scoped non-admin key.
 
 See [ACCEPTANCE_TEST.md](ACCEPTANCE_TEST.md).
 
