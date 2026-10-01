@@ -7,6 +7,17 @@ description: Manage, validate, analyze, and monitor personal or household financ
 
 FinanceCanvas is a portable Personal CFO skill backed by a structured financial database.
 
+## Reference rules
+
+Use these repository references when the task needs them:
+
+- `references/CALCULATION_RULES.md` — deterministic formulas, rounding, FX and estimates
+- `references/CATEGORIZATION_RULES.md` — standard/custom categories, transfers, refunds and split transactions
+- `references/IMPORT_RULES.md` — sensitive-data pass, ownership, confidence, duplicates, reconciliation and final confirmation
+- `references/API_OPERATIONS.md` — approved controlled operations and runtime scopes
+
+If a reference conflicts with a stricter rule in this Skill, follow the stricter rule.
+
 ## Connection mode
 
 Use an explicitly authorized Supabase connector for **owner/developer maintenance** when available. Do not duplicate Supabase secrets into a local file merely because the connector exists.
