@@ -40,6 +40,8 @@ A change is not considered complete until the relevant checks pass.
 - [ ] Workspace erasure requires explicit confirmation.
 - [ ] Audit records remain data-minimized.
 - [ ] Older imports cannot move data-freshness dates backward.
+- [ ] Confirmed transaction batches are atomic (all-or-nothing).
+- [ ] Financial Inbox sensitive fields cannot persist blocked identifiers/secrets.
 
 ## 5. Financial safety
 
