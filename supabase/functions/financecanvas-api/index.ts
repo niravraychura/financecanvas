@@ -56,9 +56,27 @@ function luhnDigits(raw:string){
 function redactCardNumbers(s:string){
   return s.replace(/(?:\d[ -]?){13,19}/g,(m)=>luhnDigits(m)?("[REDACTED_CARD_LAST4_"+m.replace(/\D/g,"").slice(-4)+"]"):m);
 }
+function sanitizeString(s:string){
+  const critical=/(?:cvv|cvc|otp|upi[ _-]?pin|atm[ _-]?pin|password|passcode|private[ _-]?key|seed[ _-]?phrase|recovery[ _-]?phrase|api[ _-]?key|access[ _-]?token|refresh[ _-]?token)\s*[:=]\s*\S+/i;
+  const govt=/(?:aadhaar|aadhar|vid|pan|passport)\s*[:=]\s*[A-Z0-9 -]{6,20}/i;
+  const acct=/(?:account(?:[ _-]?number)?|a\/c)\s*[:=]\s*\d{6,20}/i;
+  if(critical.test(s)){
+    const e:any=new Error("Critical authentication/payment secret detected. FinanceCanvas will not persist this value.");
+    e.status=422; e.code="CRITICAL_SECRET_DETECTED"; throw e;
+  }
+  if(govt.test(s)){
+    const e:any=new Error("High-risk government identifier detected. FinanceCanvas v0.1 does not persist this identifier.");
+    e.status=422; e.code="HIGH_RISK_IDENTIFIER_DETECTED"; throw e;
+  }
+  if(acct.test(s)){
+    const e:any=new Error("Full account number detected. Store only a masked identifier or final four digits.");
+    e.status=422; e.code="FULL_ACCOUNT_NUMBER_DETECTED"; throw e;
+  }
+  return redactCardNumbers(s);
+}
 function sanitizeValue(v:any,path="root"):any{
   if(v===null||v===undefined)return v;
-  if(typeof v==="string")return redactCardNumbers(v);
+  if(typeof v==="string")return sanitizeString(v);
   if(Array.isArray(v))return v.map((x,i)=>sanitizeValue(x,path+"["+i+"]"));
   if(typeof v==="object"){
     const out:Record<string,any>={};
