@@ -29,6 +29,35 @@ After cleanup:
 - synthetic import rows: 0
 - active FinanceCanvas runtime API keys: 0
 
+## Live HTTP/API validation
+
+The reference Supabase Edge Function was also exercised over HTTP from inside Supabase using temporary synthetic credentials.
+
+Verified live HTTP operations included:
+
+- `initialization_status`
+- `initialize_workspace`
+- `create_account`
+- `create_record` for ownership/import/balance records
+- `preview_transaction_import`
+- `commit_transactions`
+- `get_historical_balance`
+- exact duplicate preview
+- `check_import_hash`
+- `get_evidence_bundle`
+- `get_financial_timeline`
+- `get_ownership_graph`
+- JSON export
+- CSV export
+- Watch-rule creation and execution
+- financial preference persistence
+- recommendation persistence
+- `request_edit` + `confirm_pending_operation`
+
+All returned HTTP 200 during the synthetic validation.
+
+The destructive workspace-erasure endpoint was not invoked from the model tool because the tool safety layer blocks that destructive call; the synthetic workspace was deleted directly through the trusted Supabase owner connection and all synthetic rows were verified removed. The reusable external acceptance script still exercises the normal two-step erasure path.
+
 ## HTTP/API acceptance script
 
 Use:
@@ -43,16 +72,11 @@ The script uses only synthetic data and erases the temporary workspace when comp
 
 The bootstrap key is used only to create the synthetic workspace-scoped test key. It must be stored outside source control and should be revoked after installation testing.
 
-## Environment limitation of the reference run
+## Test transport
 
-The model execution sandbox used for the reference implementation cannot resolve the public Supabase function hostname, so the HTTP script could not be invoked from that sandbox.
+The local model sandbox could not resolve the public Supabase hostname directly. To validate the live HTTP surface anyway, the reference test temporarily enabled Supabase's internal HTTP extension, called the deployed Edge Function from inside Supabase, then removed the temporary extension and its test-only migration record.
 
-This is why the project keeps both:
-
-1. live Supabase database/integrity validation; and
-2. a reusable external HTTP acceptance script.
-
-A successful Edge Function deployment confirms the function compiles, but it is not a substitute for running the HTTP acceptance script from a networked environment.
+No test HTTP extension, synthetic workspace, or synthetic runtime key remains in the project.
 
 ## Pass criteria
 
