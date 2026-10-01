@@ -74,6 +74,8 @@ REQUIRED_API_MARKERS = [
     "base_fingerprint",
     "assertIdsInWorkspace",
     "CROSS_WORKSPACE_REFERENCE",
+    "SENSITIVE_FIELD_NOT_ALLOWED",
+    "financecanvas_commit_transaction_batch",
 ]
 
 def tracked_files() -> list[str]:
