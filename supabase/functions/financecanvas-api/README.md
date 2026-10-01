@@ -33,3 +33,32 @@ Use environment variables outside source control:
 FINANCECANVAS_API_URL=https://YOUR_PROJECT_REF.supabase.co/functions/v1/financecanvas-api
 FINANCECANVAS_API_KEY=fc_...
 ```
+
+
+## Runtime scopes
+
+External-client keys may be restricted to a single FinanceCanvas workspace and to explicit scopes:
+
+- `read` — read/query operations
+- `write` — create/import/edit/delete request operations
+- `watch` — Watch rule/check operations
+- `export` — JSON/CSV exports
+- `admin` — key-management/administrative operations
+
+A workspace-scoped key cannot target another workspace.
+
+Owner/developer Supabase admin connectors are for maintenance, not normal end-user/LLM runtime access.
+
+## Data portability and erasure
+
+The API supports:
+- `export_workspace_json`
+- `export_workspace_csv`
+- `request_workspace_erasure`
+- `confirm_workspace_erasure`
+
+Workspace erasure is deliberately separate from ordinary record deletion and requires explicit confirmation.
+
+## Dependency pinning
+
+The Edge Function pins `@supabase/supabase-js` to an exact reviewed version. Dependency changes require the FinanceCanvas security checklist.
