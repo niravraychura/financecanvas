@@ -11,6 +11,11 @@ Initial FinanceCanvas release:
 - Exact runtime dependency pinning
 - portable SKILL.md
 - multi-profile/workspace data model
+- Joint ownership/borrower/household relationship model
+- Account balance history and credit-card statement metadata
+- Budgets, recurring items and financial snapshots
+- Expanded Watch checks for due dates, utilization, renewals, goals, budgets, recurring items, concentration, refunds and cash flow
+- Cross-workspace reference validation on controlled writes
 - structured-data-only persistence
 - exact and near-duplicate protection
 - two-step edit and permanent-delete confirmation
