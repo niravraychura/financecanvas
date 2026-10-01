@@ -1,105 +1,77 @@
 # FinanceCanvas
 
-**FinanceCanvas is a portable AI Personal CFO skill backed by a structured, user-controlled financial database.**
+**FinanceCanvas is a portable AI Personal CFO skill with a structured, user-controlled Supabase data layer.**
 
-FinanceCanvas is designed for individuals, couples, and households that want an AI assistant to understand their financial history without permanently storing source bank statements, bills, receipts, screenshots, or other uploaded documents.
+[![CI](https://github.com/niravraychura/financecanvas/actions/workflows/ci.yml/badge.svg)](https://github.com/niravraychura/financecanvas/actions/workflows/ci.yml)
 
-> Status: v0.1 reference implementation.
+FinanceCanvas is designed for individuals, couples, and households that want an AI assistant to understand long-term financial history without turning uploaded statements, receipts, screenshots, or bills into a permanent document archive.
 
-## What it does
+> **Status:** Personal/private v0.1 reference implementation.  
+> **Commercial/public production:** intentionally marked `production_ready = false` until the production gate in [COMPLIANCE.md](COMPLIANCE.md) is completed.
 
-FinanceCanvas can organize and reason over structured data for:
+## Why FinanceCanvas
 
-- bank accounts and credit cards
-- transactions and split transactions
-- income and recurring expenses
-- loans and repayments
-- insurance
-- assets and liabilities
-- investments
-- subscriptions
-- financial goals
-- multiple people and shared household finances
-- household membership and profile relationships
-- joint asset/liability/loan ownership with percentages/roles
-- account balance history and credit-card statement metadata
-- budgets and recurring financial items
-- historical financial snapshots
-- financial alerts and anomaly checks
-- historical balance reconstruction from statement running balances or confirmed anchors
-- automatic recurring-pattern discovery
-- subscription price/reappearance checks
-- persistent financial preferences and recommendation history
-- evidence bundles, financial timeline and ownership graph
-- source-document SHA-256 duplicate protection
+A normal chat can analyze a statement you upload today, but it may not have a reliable structured record months later.
 
-## Architecture
+FinanceCanvas turns confirmed financial facts into a persistent financial model so you can ask questions such as:
 
-```text
-ChatGPT / compatible AI
-        |
-        v
-FinanceCanvas Skill
-        |
-        v
-Controlled FinanceCanvas API
-(Supabase Edge Function)
-        |
-        v
-Supabase Postgres
-structured financial data only
-```
+- "What was my XYZ Bank balance on 15 March 2026?"
+- "How much did we spend on travel last year?"
+- "Did this subscription increase its price?"
+- "Show every unexpected fee or forex markup."
+- "Are any credit cards near their due dates or utilization limit?"
+- "How has our net worth changed?"
+- "Can I afford this home under these loan assumptions?"
+- "Which transactions made this recommendation?"
 
-When an authorized Supabase connector is already available, FinanceCanvas prefers that connector and does not require a local `.env` or user-supplied Supabase secret. The optional Edge Function remains a portable adapter for external clients/LLMs. Database integrity rules live outside `SKILL.md` so editing the Skill cannot silently weaken duplicate, edit, delete, or audit controls.
+When evidence is incomplete, FinanceCanvas is designed to say so rather than guess.
 
-## Privacy model
+---
 
-Uploaded PDF/JPG/PNG/CSV/XLS/XLSX files are temporary inputs to the AI/chat only.
+## Contents
 
-FinanceCanvas follows:
+- [Features](#features)
+- [Architecture](#architecture)
+- [Installation](#installation)
+- [First-time setup](#first-time-setup)
+- [Using FinanceCanvas](#using-financecanvas)
+- [Historical balance example](#historical-balance-example)
+- [FinanceCanvas Watch](#financecanvas-watch)
+- [Privacy and security](#privacy-and-security)
+- [Data model and evidence](#data-model-and-evidence)
+- [Testing](#testing)
+- [Updating](#updating)
+- [Project documentation](#project-documentation)
+- [Commercial/public deployment](#commercialpublic-deployment)
 
-```text
-Upload -> Extract -> Validate -> Review uncertainties
-       -> Final confirmation -> Store structured data
-```
+---
 
-FinanceCanvas does **not** intentionally persist the original uploaded source file.
+## Features
 
-Never persist or echo critical secrets such as CVV/CVC, PIN/UPI PIN, OTP, passwords/passcodes, recovery phrases, private keys, API/access/refresh tokens, or internet-banking credentials.
+### Personal and household finance
 
-FinanceCanvas also minimizes high-risk identifiers. v0.1 does not intentionally persist Aadhaar/VID, PAN, passport values, full card numbers, or full bank-account numbers. Cards/accounts are represented using masked values or last four digits only.
+- multiple financial profiles in one workspace;
+- households and profile relationships;
+- personal, business and shared transaction purposes;
+- split transactions;
+- account/asset/liability/loan ownership percentages and roles;
+- multi-currency storage with an explicit workspace base currency.
 
+### Accounts and transaction history
 
-## Connector-first access
+- bank accounts;
+- credit cards;
+- wallets/cash/brokerage/loan/other accounts;
+- historical account balances;
+- credit-card statements;
+- transaction running balances;
+- same-day statement sequence/order;
+- merchant normalization and learned aliases;
+- user-confirmed categories and corrections.
 
-If the owner/developer already has an explicitly authorized Supabase connection, FinanceCanvas may use it for maintenance without duplicating credentials. Normal end-user/LLM runtime access should remain behind the restricted FinanceCanvas API (or an equivalently least-privilege connector), because a project-admin connector can bypass application safeguards.
+### Financial Inbox
 
-In that mode:
-- do not ask the user to paste Supabase credentials;
-- do not create a local secret file just to duplicate an existing authorized connection;
-- do not store connector credentials in FinanceCanvas;
-- preserve the same confirmation, duplicate, deletion and audit controls.
-
-The Edge Function/API-key mode is optional and intended for external clients that cannot use the authorized connector.
-
-## Multi-person and household support
-
-A workspace can represent one person, a couple, or a household. It may contain multiple financial profiles and shared records.
-
-On first initialization FinanceCanvas asks whether the user wants to configure a named workspace. If declined, it creates an internal default personal workspace that can be renamed later.
-
-
-## Sensitive upload behavior
-
-When an uploaded statement, screenshot, image, CSV or pasted text contains sensitive information, FinanceCanvas must warn the user in chat before persistence.
-
-Critical secrets are never saved and should not be quoted back. High-risk identifiers are masked/minimized. If exposure may create risk, FinanceCanvas should provide immediate next steps, such as changing a password, rotating a token/key, or contacting the bank/card issuer.
-
-FinanceCanvas does not intentionally retain the source document in its own database. **The chat/LLM host may separately retain an uploaded file under that provider's privacy/retention policy.** FinanceCanvas must not claim it can delete that host copy unless the host provides an explicit deletion capability.
-
-## Import and confirmation
-
-Supported temporary input formats:
+Temporary inputs can include:
 
 - PDF
 - JPG/JPEG
@@ -108,164 +80,567 @@ Supported temporary input formats:
 - XLS/XLSX
 - pasted text
 
-The import workflow:
+Import states:
 
-1. detect document/data type
-2. detect likely person/profile and account
-3. extract raw financial facts
-4. normalize merchants/categories separately
-5. calculate confidence
-6. reconcile totals when possible
-7. detect exact and near duplicates
-8. ask only about uncertain/conflicting records
-9. ask once for final import confirmation
-10. commit structured data
+```text
+received
+  -> detected
+  -> extracted
+  -> validated
+  -> needs_review
+  -> confirmed
+  -> committed
+  -> completed
+```
 
-If a spelling/grammar correction changes user-entered or source text materially, FinanceCanvas shows the original and recommendation and asks whether to accept, keep the original, or edit.
+Only uncertain/material items should be presented for review before the final import confirmation.
 
-## Duplicate protection
+### Duplicate protection
 
-### Exact duplicate
-An exact transaction fingerprint cannot be inserted silently.
+FinanceCanvas protects against duplicates at multiple levels:
 
-The user can:
-- Skip
-- Review existing
-- Add as a separate valid transaction
+1. SHA-256 source-document hash when source bytes are available;
+2. deterministic transaction fingerprint;
+3. exact duplicate lookup;
+4. near-duplicate comparison;
+5. explicit override reason if the user intentionally keeps a duplicate.
 
-Adding separately requires an explicit reason, which is stored in the audit/duplicate review history.
+Confirmed transaction batches are committed **atomically**: either the whole prepared batch succeeds or it rolls back.
 
-### Near duplicate / changed copy
-FinanceCanvas shows a field-by-field difference and asks whether to:
-- Keep existing
-- Update existing
-- Add separately
-- Cancel
+### Financial records
 
-Update/add-separate requires a reason. Existing financial data is never silently overwritten.
+First-class records exist for:
 
-## Edit and delete protection
+- income sources;
+- loans and loan payments;
+- insurance and premium history;
+- assets and liabilities;
+- investments and investment transactions;
+- investment allocation targets;
+- subscriptions and recurring items;
+- budgets;
+- financial goals;
+- historical financial snapshots.
 
-Edits and deletions use two steps:
+### Financial memory
 
-1. request/propose the operation
-2. explicitly confirm it
+FinanceCanvas can persist **user-confirmed** preferences such as:
 
-Normal deletion is soft deletion. Permanent deletion is supported only after explicit confirmation.
+- emergency-fund policy;
+- budgeting conventions;
+- savings priorities;
+- shared-expense rules;
+- payment/card-strategy preferences;
+- risk-profile wording;
+- goal assumptions.
 
-Audit history preserves before/after values and reasons.
+Blocked secrets and identity credentials are never valid "financial preferences."
 
-FinanceCanvas finance rules are documented under `references/`, including deterministic calculation rules, categorization, imports, data model, controlled API operations and Watch configurations.
+### Recommendation history
+
+Material recommendations can retain:
+
+- rationale;
+- evidence;
+- assumptions;
+- confidence;
+- accepted/rejected/dismissed/completed status.
+
+Recommendations remain interpretations, not database facts.
+
+### Historical questions and evidence
+
+FinanceCanvas supports:
+
+- historical balance queries;
+- evidence bundles;
+- financial timeline;
+- ownership graph;
+- data-freshness information;
+- exact vs reconstructed vs estimated answer labels.
+
+### Scenario analysis
+
+Deterministic what-if analysis can cover:
+
+- home/down-payment scenarios;
+- loan EMI/tenure/rate scenarios;
+- prepayment scenarios;
+- emergency-fund changes;
+- savings goals;
+- rent-vs-EMI cash flow;
+- user-directed income/expense changes.
+
+Scenario values remain separate from confirmed records.
+
+---
+
+## Architecture
+
+```text
+                Owner / Developer
+                       |
+             Authorized Supabase connector
+              (maintenance / deployment)
+                       |
+                       v
++------------------------------------------------+
+|                 Supabase project               |
+|                                                |
+|  Edge Function: financecanvas-api              |
+|             |                                  |
+|             v                                  |
+|  PostgreSQL structured financial data          |
+|  + RLS enabled                                 |
+|  + direct anon/authenticated DML revoked       |
++------------------------------------------------+
+                       ^
+                       |
+          restricted approved operations
+                       |
+               FinanceCanvas Skill
+                       ^
+                       |
+          ChatGPT / compatible AI / client
+```
+
+### Important trust boundary
+
+An owner/developer Supabase admin connector is useful for installation and maintenance, but it can execute privileged database operations.
+
+**Normal runtime access should use the restricted FinanceCanvas API or an equivalently least-privilege connector.**
+
+Editing `SKILL.md` must not silently remove database/API enforcement for:
+
+- duplicate protection;
+- atomic imports;
+- sensitive-data rejection;
+- two-step edits/deletes;
+- workspace erasure;
+- cross-workspace protection;
+- audit history.
+
+---
+
+# Installation
+
+For the complete setup guide, read **[INSTALL.md](INSTALL.md)**.
+
+For the shortest setup path, read **[QUICKSTART.md](QUICKSTART.md)**.
+
+## Prerequisites
+
+- Git
+- a Supabase project
+- an AI/agent environment that can load repository/project instructions or a Skill file
+- Python 3.11+ recommended for tests/helper scripts
+- Supabase CLI optional if you prefer terminal deployment
+
+## 1. Clone the repository
+
+```bash
+git clone https://github.com/niravraychura/financecanvas.git
+cd financecanvas
+```
+
+## 2. Run the safety checks
+
+```bash
+python -m unittest discover -s tests -v
+python scripts/security_check.py
+```
+
+Do not continue if either command fails.
+
+## 3. Install/load the Skill
+
+Do **not** copy only `SKILL.md`.
+
+Keep the Skill and references together:
+
+```text
+financecanvas/
+├── SKILL.md
+├── references/
+├── SECURITY.md
+├── SECURITY_CHECKLIST.md
+└── AGENTS.md
+```
+
+If your AI host supports repository/project instructions, add the repository to that project and instruct it to use `SKILL.md`.
+
+If your host supports a Skills directory, copy or link the **whole FinanceCanvas directory** into that host's supported Skills location so the relative `references/` files remain available.
+
+The exact Skills-directory path is host-specific; use the current documentation for your AI host.
+
+## 4. Deploy Supabase
+
+### Connector-first owner setup
+
+If your AI host already has an explicitly authorized Supabase connector:
+
+- use it for owner/developer maintenance;
+- apply every migration under `supabase/migrations/` in filename order;
+- do **not** create a local Supabase-admin `.env` merely to duplicate existing connector credentials;
+- never paste the connector's credentials into chat or GitHub.
+
+### Supabase CLI setup
+
+```bash
+supabase link --project-ref YOUR_PROJECT_REF
+supabase db push
+supabase functions deploy financecanvas-api --no-verify-jwt
+```
+
+`--no-verify-jwt` is intentional because `financecanvas-api` implements its own FinanceCanvas runtime-key authentication.
+
+Do not put a Supabase server/service-role secret into the Skill or client.
+
+## 5. External-client runtime access
+
+You do **not** need this when you are only doing owner maintenance through an authorized Supabase connector.
+
+For an external LLM/app that needs the restricted API, generate a runtime key locally:
+
+```bash
+python scripts/generate_api_key.py --workspace-id YOUR_WORKSPACE_UUID
+```
+
+Store the plaintext `fc_...` value in the client's secret store.
+
+Only its SHA-256 hash belongs in Supabase.
+
+Recommended normal scopes:
+
+```text
+read,write,watch,export
+```
+
+Do not grant `admin` to an ordinary runtime client.
+
+See [INSTALL.md](INSTALL.md) for the full bootstrap procedure.
+
+## 6. Run acceptance testing
+
+Before real financial data:
+
+```bash
+FINANCECANVAS_API_URL="https://YOUR_PROJECT_REF.supabase.co/functions/v1/financecanvas-api" \
+FINANCECANVAS_BOOTSTRAP_API_KEY="fc_..." \
+python scripts/acceptance_test.py
+```
+
+The test uses synthetic data only and cleans up its test workspace.
+
+See [ACCEPTANCE_TEST.md](ACCEPTANCE_TEST.md).
+
+---
+
+## First-time setup
+
+On first persistent use FinanceCanvas checks whether a workspace exists.
+
+It should ask:
+
+> Would you like to set up your FinanceCanvas workspace now?
+
+If yes, provide:
+
+- workspace name;
+- base currency;
+- first financial profile name.
+
+If you decline, FinanceCanvas can use an internal default personal workspace that may be renamed later.
+
+No real workspace is automatically created merely by cloning/installing the repository.
+
+---
+
+## Using FinanceCanvas
+
+### Import a statement
+
+```text
+Import this March bank statement into FinanceCanvas.
+
+First warn me if it contains sensitive information.
+Do not store the source document.
+Show me only uncertain/conflicting items.
+Do not commit anything until I confirm.
+```
+
+### Ask a historical question
+
+```text
+What was my XYZ Bank balance on 15 March 2026?
+
+Tell me whether the answer is exact, reconstructed, or insufficient,
+and show the evidence coverage.
+```
+
+### Inspect spending
+
+```text
+Show my confirmed dining spend from January through March.
+Tell me which accounts and transactions are included.
+```
+
+### Run Watch
+
+```text
+Run FinanceCanvas Watch and show anything unusual:
+duplicate charges, unexpected fees, subscription changes,
+high utilization, due dates, EMI changes, refunds,
+reconciliation problems, spending anomalies, and stale data.
+```
+
+### Run a scenario
+
+```text
+Using my confirmed FinanceCanvas baseline, compare a 20-year and
+25-year home-loan scenario. Keep all scenario assumptions separate
+from real financial records.
+```
+
+---
+
+## Historical balance example
+
+If a March 2026 statement contains running balances:
+
+```text
+Date          Transaction                 Balance after
+15-Mar-2026   Synthetic Rent              ₹1,200
+15-Mar-2026   Synthetic Cafe              ₹1,150
+```
+
+FinanceCanvas stores both the running balance and statement sequence.
+
+A later query for the end-of-day balance on 15 March can return:
+
+```text
+Balance: ₹1,150
+Method: exact statement running balance
+Confidence: exact_from_confirmed_running_balance
+Evidence: statement import + final transaction sequence for 15 March
+```
+
+If no running balance exists, FinanceCanvas may reconstruct from a confirmed balance anchor plus all confirmed intervening transactions.
+
+If coverage/order cannot be proved, it must return **insufficient/ambiguous data**, not guess.
+
+---
 
 ## FinanceCanvas Watch
 
-FinanceCanvas Watch can evaluate stored data for:
+Implemented Watch categories include:
 
-- unusual/high-value transactions
-- potential fraud signals
-- unexpected fees, interest, forex markups and surcharges
-- possible duplicate charges
-- subscription changes
-- card utilization/due-date/annual-fee rules
-- missing refunds
-- loan/EMI changes
-- spending anomalies
-- goal progress
-- investment concentration/allocation drift
-- insurance renewals
-- reconciliation failures
-- stale/missing financial data
+- potential fraud / configured high-value debits;
+- unexpected fees, finance charges, forex markups and surcharges;
+- possible duplicate charges;
+- subscription amount changes;
+- cancelled-subscription reappearance;
+- card payment due/overdue;
+- card utilization;
+- annual fee / waiver-progress context;
+- insurance renewal;
+- financial goal progress;
+- budget/spending threshold;
+- recurring item/subscription reminders;
+- investment concentration;
+- investment allocation drift;
+- expected refund not found;
+- cash-flow threshold;
+- loan/EMI changes;
+- statement reconciliation failure;
+- category spending anomaly;
+- stale/missing financial data.
 
-An anomaly is **not proof of fraud**. FinanceCanvas should explain why a transaction was flagged and provide practical next steps.
+A Watch finding is a **signal**, not proof of fraud or wrongdoing.
 
-FinanceCanvas cannot detect a transaction that has never been imported or connected.
+### Scheduling
 
+A stored Watch rule does not create background execution by itself.
 
-## Compliance posture
+If the host provides an automation/scheduler, use that system for the requested cadence.
 
-FinanceCanvas v0.1 is currently marked **prototype / not production-ready for a public financial service**.
+Do not claim continuous or real-time monitoring unless a live data source and scheduler are actually connected.
 
-For a purely personal/domestic installation, India's DPDP Act contains a personal/domestic-purpose exclusion. That should not be relied on once the system is offered commercially, to clients, employees, or the public.
+---
 
-Before public/commercial deployment, complete the checklist in [COMPLIANCE.md](COMPLIANCE.md) and publish an appropriate [privacy notice](PRIVACY.md).
+## Privacy and security
 
-FinanceCanvas is intentionally **not** designed to:
-- act as a bank/payment system or hold customer funds;
-- collect bank login credentials or scrape authenticated bank portals;
-- represent itself as an RBI Account Aggregator;
-- provide regulated securities investment-adviser/research-analyst services without the required SEBI registration/compliance review.
+### Source documents
 
-## Supabase setup
+FinanceCanvas does **not** intentionally persist uploaded PDFs/images/spreadsheets.
 
-The reference deployment uses Supabase Free:
+The host chat/LLM platform may independently retain uploads under its own privacy/retention settings. FinanceCanvas must not claim it can delete the host's copy unless the host exposes that capability.
 
-- PostgreSQL for structured financial data
-- an Edge Function as the controlled API
-- RLS enabled as defense in depth
-- direct `anon`/`authenticated` table access revoked in v0.1
+### Critical secrets — never persist
 
-The Edge Function uses Supabase server-side credentials internally. Optional external-client FinanceCanvas API keys are stored only as SHA-256 hashes, may be scoped to a single workspace, and use explicit `read`, `write`, `watch`, `export`, or `admin` scopes.
+Examples:
 
-### External-client configuration
+- CVV/CVC
+- OTP
+- ATM/card/UPI PIN
+- passwords/passcodes
+- recovery/seed phrases
+- private keys
+- API/access/refresh tokens
+- bank login credentials
 
-No local `.env` is needed when an authorized Supabase connector is available.
+If detected, FinanceCanvas should warn the user, avoid repeating the value, block persistence, and give appropriate remediation steps.
 
-For an external client that uses the optional FinanceCanvas Edge Function, use local environment variables outside source control:
+### High-risk identifiers
 
+v0.1 minimizes/blocks full:
+
+- card numbers;
+- bank-account numbers;
+- Aadhaar/VID;
+- PAN;
+- passport/tax identifiers.
+
+Accounts/cards normally use masked values or last four digits.
+
+### Repository safety
+
+The public repository must never contain:
+
+- production credentials;
+- real statements/receipts/screenshots;
+- real financial exports;
+- database dumps;
+- real personal account/card/government-ID data.
+
+Every change requires the review in [SECURITY_CHECKLIST.md](SECURITY_CHECKLIST.md).
+
+CI runs:
+
+```bash
+python -m unittest discover -s tests -v
+python scripts/security_check.py
 ```
-FINANCECANVAS_API_URL=https://YOUR_PROJECT_REF.supabase.co/functions/v1/financecanvas-api
-FINANCECANVAS_API_KEY=fc_...
+
+---
+
+## Data model and evidence
+
+Core model groups include:
+
+- identity/workspaces/profiles/households;
+- institutions/accounts/account ownership;
+- transactions/imports/Financial Inbox;
+- loans/liabilities/insurance;
+- assets/investments;
+- income/budgets/goals/subscriptions/recurring items;
+- financial preferences/recommendations;
+- Watch rules/findings;
+- privacy/security/audit records.
+
+See [references/DATA_MODEL.md](references/DATA_MODEL.md).
+
+For evidence-aware answers see [references/HISTORY_AND_EVIDENCE.md](references/HISTORY_AND_EVIDENCE.md).
+
+---
+
+## Testing
+
+### Local tests
+
+```bash
+python -m unittest discover -s tests -v
+python scripts/security_check.py
 ```
 
-Never commit a real key.
+### Acceptance test
 
-## Data portability and erasure
+See [ACCEPTANCE_TEST.md](ACCEPTANCE_TEST.md).
 
-FinanceCanvas supports structured export in **JSON and CSV**.
+The reference implementation has been validated using synthetic March-2026 data, including:
 
-Full workspace erasure is a separate two-step flow: request erasure, review the impact, then explicitly confirm. Export first when appropriate.
+- 5-row atomic import;
+- duplicate-batch rollback;
+- source-document hash duplicate blocking;
+- exact historical 15-March running balance;
+- evidence/timeline/ownership queries;
+- JSON/CSV export;
+- Watch execution;
+- preference/recommendation persistence;
+- two-step edit;
+- complete synthetic-data cleanup.
 
-## Repository safety
+The live API was also exercised over HTTP from inside Supabase.
 
-This public repository intentionally contains no personal financial records and no production credentials.
+No synthetic acceptance workspace or test runtime key is retained after cleanup.
 
-`.gitignore` excludes common secret files, statement/receipt/export folders, local databases, and Supabase local state.
+---
 
-Before every public contribution, review the diff for secrets and personal data.
+## Updating
 
-## Skill
+Before applying an update:
 
-`SKILL.md` contains the portable FinanceCanvas behavior and safety workflow.
+1. review [CHANGELOG.md](CHANGELOG.md);
+2. review new migrations;
+3. pull the repository;
+4. run tests/security checks;
+5. apply migrations;
+6. redeploy the Edge Function if its source changed;
+7. complete [SECURITY_CHECKLIST.md](SECURITY_CHECKLIST.md).
 
-Changing the Skill must not weaken database/API enforcement for duplicates, edit confirmation, deletion confirmation, or audit history.
+```bash
+git pull
+python -m unittest discover -s tests -v
+python scripts/security_check.py
+```
 
-## Security change policy
+Never treat a **BLOCKED** security review as a completed release.
 
-**Every FinanceCanvas change requires a security-impact review.**
+---
 
-GitHub CI runs `scripts/security_check.py` on every push and pull request. For backend/schema/API changes, also run the Supabase verification items in [SECURITY_CHECKLIST.md](SECURITY_CHECKLIST.md).
+## Project documentation
 
-Core security/governance documents:
+| Document | Purpose |
+|---|---|
+| [INSTALL.md](INSTALL.md) | Full installation guide |
+| [QUICKSTART.md](QUICKSTART.md) | Minimal setup path |
+| [SKILL.md](SKILL.md) | Portable FinanceCanvas behavior |
+| [ACCEPTANCE_TEST.md](ACCEPTANCE_TEST.md) | Acceptance-test process/results |
+| [SECURITY.md](SECURITY.md) | Security policy |
+| [SECURITY_CHECKLIST.md](SECURITY_CHECKLIST.md) | Mandatory post-change security review |
+| [THREAT_MODEL.md](THREAT_MODEL.md) | Trust boundaries and threats |
+| [DATA_RETENTION.md](DATA_RETENTION.md) | Retention/deletion rules |
+| [INCIDENT_RESPONSE.md](INCIDENT_RESPONSE.md) | Incident-response runbook |
+| [COMPLIANCE.md](COMPLIANCE.md) | Legal/regulatory engineering baseline |
+| [PRIVACY.md](PRIVACY.md) | Privacy-notice template |
+| [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md) | Release gate |
+| [ROADMAP.md](ROADMAP.md) | Deferred production work |
+| [AGENTS.md](AGENTS.md) | Mandatory instructions for coding/AI agents |
+| [references/](references/) | Calculation/import/Watch/data/evidence/scenario rules |
 
-- [SECURITY.md](SECURITY.md)
-- [SECURITY_CHECKLIST.md](SECURITY_CHECKLIST.md)
-- [THREAT_MODEL.md](THREAT_MODEL.md)
-- [DATA_RETENTION.md](DATA_RETENTION.md)
-- [INCIDENT_RESPONSE.md](INCIDENT_RESPONSE.md)
-- [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md)
-- [COMPLIANCE.md](COMPLIANCE.md)
-- [PRIVACY.md](PRIVACY.md)
+---
 
-A change marked **BLOCKED** by the checklist must not be treated as released/complete.
+## Commercial/public deployment
 
-## Security
+Personal/private v0.1 is deliberately different from a public financial service.
 
-See [SECURITY.md](SECURITY.md).
+Before setting `production_ready=true`, complete the applicable production gate, including items such as:
 
-## Disclaimer
+- production identity/tenant authentication;
+- end-to-end authorization design;
+- privacy notice/terms and operator identity;
+- processor/subprocessor review;
+- incident notification process;
+- backup/DR testing;
+- penetration/authorization testing;
+- regulated review for bank aggregation/payment/investment-advice features.
 
-FinanceCanvas organizes and analyzes financial information. AI interpretations can be wrong. High-impact financial, tax, insurance, investment, fraud, and legal decisions should be independently verified when appropriate.
+See [COMPLIANCE.md](COMPLIANCE.md) and [ROADMAP.md](ROADMAP.md).
+
+---
 
 ## License
 
-No open-source license has been selected yet. Public repository visibility does not itself grant permission to copy, modify, or redistribute the project.
+No open-source license has been selected yet.
+
+A public GitHub repository does **not** by itself grant permission to copy, modify, distribute, or commercially use the code.
