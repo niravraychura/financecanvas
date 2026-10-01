@@ -74,3 +74,27 @@ Use `confirmation_queue` for unresolved ownership, category, correction, duplica
 After final confirmation, the whole prepared transaction batch is committed through one database transaction.
 
 If any database insert in the prepared batch fails, the batch must roll back rather than leave a partially imported statement.
+
+
+## Source-document hash
+
+When the host can access the source file bytes, compute a SHA-256 digest before import and call `check_import_hash`.
+
+- Do not store the source bytes.
+- Store only the non-reversible SHA-256 digest in import metadata.
+- If an already committed/completed import has the same digest, stop and show the existing import rather than importing the file again.
+- If the host cannot obtain the bytes/hash, disclose that source-file duplicate protection is unavailable for that import; transaction-level duplicate protection still applies.
+
+## Running balances and statement order
+
+When a statement contains a running balance column, extract `balance_after` for each transaction.
+
+When multiple transactions occur on the same date, also preserve the statement row/order as `source_sequence`.
+
+This allows exact end-of-day historical balance answers when the statement contains enough evidence.
+
+## Recurring discovery after import
+
+After a successful import that provides enough history, call `detect_recurring_patterns`.
+
+Detected patterns are suggestions only. Show the merchant, interval, amount stability and confidence, and ask before creating/updating a recurring item or subscription.
