@@ -1,0 +1,37 @@
+name: Acceptance Test
+
+on:
+  workflow_dispatch:
+    inputs:
+      api_url:
+        description: "FinanceCanvas Edge Function URL"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  acceptance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Compile helper scripts
+        run: python -m py_compile scripts/*.py
+      - name: Run unit tests
+        run: python -m unittest discover -s tests -v
+      - name: Run security gate
+        run: python scripts/security_check.py
+      - name: Run synthetic HTTP acceptance test
+        env:
+          FINANCECANVAS_API_URL: ${{ inputs.api_url }}
+          FINANCECANVAS_BOOTSTRAP_API_KEY: ${{ secrets.FINANCECANVAS_BOOTSTRAP_API_KEY }}
+        run: |
+          test -n "$FINANCECANVAS_BOOTSTRAP_API_KEY" || {
+            echo "Repository secret FINANCECANVAS_BOOTSTRAP_API_KEY is required for this manual workflow." >&2
+            exit 1
+          }
+          python scripts/acceptance_test.py
