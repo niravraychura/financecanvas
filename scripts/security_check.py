@@ -33,6 +33,8 @@ REQUIRED_FILES = {
     "references/API_OPERATIONS.md",
     "references/DATA_MODEL.md",
     "references/WATCH_RULES.md",
+    "references/HISTORY_AND_EVIDENCE.md",
+    "references/MEMORY_AND_RECOMMENDATIONS.md",
     "supabase/functions/financecanvas-api/index.ts",
 }
 
@@ -76,6 +78,23 @@ REQUIRED_API_MARKERS = [
     "CROSS_WORKSPACE_REFERENCE",
     "SENSITIVE_FIELD_NOT_ALLOWED",
     "financecanvas_commit_transaction_batch",
+    "check_import_hash",
+    "DUPLICATE_SOURCE_DOCUMENT",
+    "get_historical_balance",
+    "balance_after",
+    "source_sequence",
+    "detect_recurring_patterns",
+    "get_financial_timeline",
+    "get_ownership_graph",
+    "get_evidence_bundle",
+    "upsert_financial_preference",
+    "record_recommendation",
+    "subscription_change",
+    "spending_anomaly",
+    "loan_emi_change",
+    "annual_fee_watch",
+    "reconciliation_watch",
+    "allocation_drift",
 ]
 
 def tracked_files() -> list[str]:
