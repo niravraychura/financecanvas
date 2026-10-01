@@ -191,7 +191,7 @@ The reference deployment uses Supabase Free:
 - RLS enabled as defense in depth
 - direct `anon`/`authenticated` table access revoked in v0.1
 
-The Edge Function uses Supabase server-side credentials internally. FinanceCanvas clients use a separate installation API key beginning with `fc_`; only its SHA-256 hash is stored in the database.
+The Edge Function uses Supabase server-side credentials internally. Optional external-client FinanceCanvas API keys are stored only as SHA-256 hashes, may be scoped to a single workspace, and use explicit `read`, `write`, `watch`, `export`, or `admin` scopes.
 
 ### External-client configuration
 
@@ -206,6 +206,12 @@ FINANCECANVAS_API_KEY=fc_...
 
 Never commit a real key.
 
+## Data portability and erasure
+
+FinanceCanvas supports structured export in **JSON and CSV**.
+
+Full workspace erasure is a separate two-step flow: request erasure, review the impact, then explicitly confirm. Export first when appropriate.
+
 ## Repository safety
 
 This public repository intentionally contains no personal financial records and no production credentials.
@@ -219,6 +225,25 @@ Before every public contribution, review the diff for secrets and personal data.
 `SKILL.md` contains the portable FinanceCanvas behavior and safety workflow.
 
 Changing the Skill must not weaken database/API enforcement for duplicates, edit confirmation, deletion confirmation, or audit history.
+
+## Security change policy
+
+**Every FinanceCanvas change requires a security-impact review.**
+
+GitHub CI runs `scripts/security_check.py` on every push and pull request. For backend/schema/API changes, also run the Supabase verification items in [SECURITY_CHECKLIST.md](SECURITY_CHECKLIST.md).
+
+Core security/governance documents:
+
+- [SECURITY.md](SECURITY.md)
+- [SECURITY_CHECKLIST.md](SECURITY_CHECKLIST.md)
+- [THREAT_MODEL.md](THREAT_MODEL.md)
+- [DATA_RETENTION.md](DATA_RETENTION.md)
+- [INCIDENT_RESPONSE.md](INCIDENT_RESPONSE.md)
+- [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md)
+- [COMPLIANCE.md](COMPLIANCE.md)
+- [PRIVACY.md](PRIVACY.md)
+
+A change marked **BLOCKED** by the checklist must not be treated as released/complete.
 
 ## Security
 
