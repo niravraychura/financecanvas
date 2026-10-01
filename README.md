@@ -39,7 +39,7 @@ Supabase Postgres
 structured financial data only
 ```
 
-The Skill never receives Supabase database credentials and never writes raw SQL. Database integrity rules live in the data/API layer so editing `SKILL.md` does not change how data is stored, edited, deleted, or deduplicated.
+When an authorized Supabase connector is already available, FinanceCanvas prefers that connector and does not require a local `.env` or user-supplied Supabase secret. The optional Edge Function remains a portable adapter for external clients/LLMs. Database integrity rules live outside `SKILL.md` so editing the Skill cannot silently weaken duplicate, edit, delete, or audit controls.
 
 ## Privacy model
 
@@ -54,21 +54,37 @@ Upload -> Extract -> Validate -> Review uncertainties
 
 FinanceCanvas does **not** intentionally persist the original uploaded source file.
 
-Never store:
-- CVV
-- PIN
-- OTP
-- banking passwords
-- internet-banking credentials
-- full card numbers unless a future secure design explicitly requires them
+Never persist or echo critical secrets such as CVV/CVC, PIN/UPI PIN, OTP, passwords/passcodes, recovery phrases, private keys, API/access/refresh tokens, or internet-banking credentials.
 
-Prefer masked account/card identifiers and last four digits.
+FinanceCanvas also minimizes high-risk identifiers. v0.1 does not intentionally persist Aadhaar/VID, PAN, passport values, full card numbers, or full bank-account numbers. Cards/accounts are represented using masked values or last four digits only.
+
+
+## Connector-first access
+
+If the host application/LLM already has an explicitly authorized Supabase connection, FinanceCanvas should use that connection directly for approved maintenance/data operations.
+
+In that mode:
+- do not ask the user to paste Supabase credentials;
+- do not create a local secret file just to duplicate an existing authorized connection;
+- do not store connector credentials in FinanceCanvas;
+- preserve the same confirmation, duplicate, deletion and audit controls.
+
+The Edge Function/API-key mode is optional and intended for external clients that cannot use the authorized connector.
 
 ## Multi-person and household support
 
 A workspace can represent one person, a couple, or a household. It may contain multiple financial profiles and shared records.
 
 On first initialization FinanceCanvas asks whether the user wants to configure a named workspace. If declined, it creates an internal default personal workspace that can be renamed later.
+
+
+## Sensitive upload behavior
+
+When an uploaded statement, screenshot, image, CSV or pasted text contains sensitive information, FinanceCanvas must warn the user in chat before persistence.
+
+Critical secrets are never saved and should not be quoted back. High-risk identifiers are masked/minimized. If exposure may create risk, FinanceCanvas should provide immediate next steps, such as changing a password, rotating a token/key, or contacting the bank/card issuer.
+
+FinanceCanvas does not intentionally retain the source document in its own database. **The chat/LLM host may separately retain an uploaded file under that provider's privacy/retention policy.** FinanceCanvas must not claim it can delete that host copy unless the host provides an explicit deletion capability.
 
 ## Import and confirmation
 
@@ -151,6 +167,21 @@ An anomaly is **not proof of fraud**. FinanceCanvas should explain why a transac
 
 FinanceCanvas cannot detect a transaction that has never been imported or connected.
 
+
+## Compliance posture
+
+FinanceCanvas v0.1 is currently marked **prototype / not production-ready for a public financial service**.
+
+For a purely personal/domestic installation, India's DPDP Act contains a personal/domestic-purpose exclusion. That should not be relied on once the system is offered commercially, to clients, employees, or the public.
+
+Before public/commercial deployment, complete the checklist in [COMPLIANCE.md](COMPLIANCE.md) and publish an appropriate [privacy notice](PRIVACY.md).
+
+FinanceCanvas is intentionally **not** designed to:
+- act as a bank/payment system or hold customer funds;
+- collect bank login credentials or scrape authenticated bank portals;
+- represent itself as an RBI Account Aggregator;
+- provide regulated securities investment-adviser/research-analyst services without the required SEBI registration/compliance review.
+
 ## Supabase setup
 
 The reference deployment uses Supabase Free:
@@ -162,16 +193,18 @@ The reference deployment uses Supabase Free:
 
 The Edge Function uses Supabase server-side credentials internally. FinanceCanvas clients use a separate installation API key beginning with `fc_`; only its SHA-256 hash is stored in the database.
 
-### Environment variables for a client
+### External-client configuration
 
-Copy `.env.example` and set:
+No local `.env` is needed when an authorized Supabase connector is available.
+
+For an external client that uses the optional FinanceCanvas Edge Function, use local environment variables outside source control:
 
 ```
 FINANCECANVAS_API_URL=https://YOUR_PROJECT_REF.supabase.co/functions/v1/financecanvas-api
 FINANCECANVAS_API_KEY=fc_...
 ```
 
-Never commit the real key.
+Never commit a real key.
 
 ## Repository safety
 
