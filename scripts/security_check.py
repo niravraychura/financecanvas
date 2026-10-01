@@ -31,6 +31,8 @@ REQUIRED_FILES = {
     "references/CATEGORIZATION_RULES.md",
     "references/IMPORT_RULES.md",
     "references/API_OPERATIONS.md",
+    "references/DATA_MODEL.md",
+    "references/WATCH_RULES.md",
     "supabase/functions/financecanvas-api/index.ts",
 }
 
@@ -70,6 +72,8 @@ REQUIRED_API_MARKERS = [
     "confirm_workspace_erasure",
     "export_workspace_csv",
     "base_fingerprint",
+    "assertIdsInWorkspace",
+    "CROSS_WORKSPACE_REFERENCE",
 ]
 
 def tracked_files() -> list[str]:
