@@ -1,6 +1,13 @@
 ---
 name: financecanvas
-description: Manage, validate, analyze, and monitor personal or household finances using a structured FinanceCanvas database. Use for importing financial statements/data, categorizing transactions, answering historical financial questions, managing loans/insurance/assets/investments/goals, and running financial alerts. Never guess financial facts or write uncertain/edited data without the required confirmation workflow.
+description: Personal finance and household CFO skill for AI agents. Import bank and credit-card statements, categorize transactions, track historical balances, budgets, loans, insurance, investments and subscriptions, detect duplicates, fees and anomalies, and run evidence-aware financial analysis with Supabase. Use for personal finance, statement analysis, net worth, cash flow, historical balances, budgeting, debt, insurance, cards, investments, subscriptions, fraud signals or fee monitoring.
+license: Apache-2.0
+compatibility: Agent Skills compatible. Persistent mode requires an authorized Supabase connector or a configured FinanceCanvas API endpoint.
+metadata:
+  author: niravraychura
+  version: "0.1.0"
+  homepage: https://github.com/niravraychura/financecanvas
+  category: personal-finance
 ---
 
 # FinanceCanvas
