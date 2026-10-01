@@ -31,6 +31,7 @@ REQUIRED_FILES = {
     "NOTICE",
     "CITATION.cff",
     "THIRD_PARTY.md",
+    "REPOSITORY_METADATA.md",
     "ADVANCED_SETUP.md",
     "INSTALL.md",
     "QUICKSTART.md",
