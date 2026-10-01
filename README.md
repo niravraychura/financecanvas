@@ -20,6 +20,11 @@ FinanceCanvas can organize and reason over structured data for:
 - subscriptions
 - financial goals
 - multiple people and shared household finances
+- household membership and profile relationships
+- joint asset/liability/loan ownership with percentages/roles
+- account balance history and credit-card statement metadata
+- budgets and recurring financial items
+- historical financial snapshots
 - financial alerts and anomaly checks
 
 ## Architecture
@@ -143,6 +148,8 @@ Edits and deletions use two steps:
 Normal deletion is soft deletion. Permanent deletion is supported only after explicit confirmation.
 
 Audit history preserves before/after values and reasons.
+
+FinanceCanvas finance rules are documented under `references/`, including deterministic calculation rules, categorization, imports, data model, controlled API operations and Watch configurations.
 
 ## FinanceCanvas Watch
 
