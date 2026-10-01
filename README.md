@@ -558,6 +558,10 @@ Never treat a **BLOCKED** security review as a completed release.
 | [PRIVACY.md](PRIVACY.md) | Privacy-notice template |
 | [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md) | Release gate |
 | [ROADMAP.md](ROADMAP.md) | Deferred production work |
+| [REPOSITORY_METADATA.md](REPOSITORY_METADATA.md) | Canonical GitHub description/topics/social-preview copy |
+| [CITATION.cff](CITATION.cff) | Citation metadata |
+| [LICENSE](LICENSE) | Apache-2.0 license |
+| [THIRD_PARTY.md](THIRD_PARTY.md) | Third-party dependency notice |
 | [AGENTS.md](AGENTS.md) | Mandatory instructions for coding/AI agents |
 | [references/](references/) | Calculation/import/Watch/data/evidence/scenario rules |
 
