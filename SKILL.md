@@ -15,6 +15,8 @@ Use these repository references when the task needs them:
 - `references/CATEGORIZATION_RULES.md` — standard/custom categories, transfers, refunds and split transactions
 - `references/IMPORT_RULES.md` — sensitive-data pass, ownership, confidence, duplicates, reconciliation and final confirmation
 - `references/API_OPERATIONS.md` — approved controlled operations and runtime scopes
+- `references/DATA_MODEL.md` — workspace, household, ownership and financial-record relationships
+- `references/WATCH_RULES.md` — supported Watch types, configurations and scheduling behavior
 
 If a reference conflicts with a stricter rule in this Skill, follow the stricter rule.
 
