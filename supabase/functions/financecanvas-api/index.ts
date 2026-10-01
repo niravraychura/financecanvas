@@ -258,6 +258,17 @@ Deno.serve(async(req:Request)=>{
       if(p.table==="extracted_fields" && forbiddenKey.test(String(clean.field_key??""))){
         throw Object.assign(new Error("Sensitive identifier/secret fields are not allowed in persisted extracted fields"),{status:422,code:"SENSITIVE_FIELD_NOT_ALLOWED"});
       }
+      if(p.table==="financial_preferences" && forbiddenKey.test(String(clean.preference_key??""))){
+        throw Object.assign(new Error("Sensitive secret/identifier preferences are not allowed"),{status:422,code:"SENSITIVE_PREFERENCE_NOT_ALLOWED"});
+      }
+      if(p.table==="imports" && clean.source_hash){
+        const hash=String(clean.source_hash).trim().toLowerCase();
+        if(!/^[0-9a-f]{64}$/.test(hash)) throw Object.assign(new Error("source_hash must be a SHA-256 hex digest"),{status:422,code:"INVALID_SOURCE_HASH"});
+        clean.source_hash=hash;
+        const dup=await db.from("imports").select("id,status,statement_start,statement_end,created_at").eq("workspace_id",p.workspace_id).eq("source_hash",hash).in("status",["committed","completed"]).is("deleted_at",null).limit(1);
+        if(dup.error)throw dup.error;
+        if(dup.data?.length) throw Object.assign(new Error("This source document has already been imported"),{status:409,code:"DUPLICATE_SOURCE_DOCUMENT"});
+      }
       if(p.table==="account_owners"){
         reqFields(clean,["account_id","profile_id"]);
         const a=await db.from("accounts").select("id").eq("id",clean.account_id).eq("workspace_id",p.workspace_id).single(); if(a.error) throw a.error;
@@ -459,14 +470,22 @@ Deno.serve(async(req:Request)=>{
       const running=await db.from("transactions").select("id,posted_date,source_sequence,balance_after,currency,import_id")
         .eq("workspace_id",p.workspace_id).eq("account_id",p.account_id).eq("posted_date",target)
         .not("balance_after","is",null).is("deleted_at",null)
-        .order("source_sequence",{ascending:false,nullsFirst:false}).limit(1);
+        .order("source_sequence",{ascending:false,nullsFirst:false});
       if(running.error)throw running.error;
       if(running.data?.length){
-        const t=running.data[0];
+        const sequenced=(running.data??[]).filter((x:any)=>x.source_sequence!==null);
+        if(running.data.length===1 || sequenced.length){
+          const t=sequenced.length?sequenced[0]:running.data[0];
+          return respond({
+            account:a.data,date:target,balance:Number(t.balance_after),currency:t.currency,
+            method:"statement_running_balance",confidence:"exact_from_confirmed_running_balance",
+            evidence:{transaction_id:t.id,import_id:t.import_id,posted_date:t.posted_date,source_sequence:t.source_sequence}
+          });
+        }
         return respond({
-          account:a.data,date:target,balance:Number(t.balance_after),currency:t.currency,
-          method:"statement_running_balance",confidence:"exact_from_confirmed_running_balance",
-          evidence:{transaction_id:t.id,import_id:t.import_id,posted_date:t.posted_date,source_sequence:t.source_sequence}
+          account:a.data,date:target,balance:null,currency:a.data.currency,method:"ambiguous_same_day_order",confidence:"insufficient",
+          reason:"Multiple running balances exist on the target date but no statement sequence was stored, so end-of-day order cannot be proven.",
+          evidence:{transaction_ids:(running.data??[]).map((x:any)=>x.id)}
         });
       }
 
@@ -647,6 +666,7 @@ Deno.serve(async(req:Request)=>{
 
     if(op==="upsert_financial_preference"){
       reqFields(p,["workspace_id","preference_key","preference_value"]);
+      if(forbiddenKey.test(String(p.preference_key))) throw Object.assign(new Error("Sensitive secret/identifier preferences are not allowed"),{status:422,code:"SENSITIVE_PREFERENCE_NOT_ALLOWED"});
       await assertIdsInWorkspace(db,"profiles",[p.profile_id],p.workspace_id);
       const row={workspace_id:p.workspace_id,profile_id:p.profile_id??null,preference_key:String(p.preference_key),preference_group:String(p.preference_group??"general"),preference_value:p.preference_value,source:p.source??"user_confirmed",confidence:p.confidence??null,confirmed:p.confirmed??true,deleted_at:null};
       let q=db.from("financial_preferences").select("id").eq("workspace_id",p.workspace_id).eq("preference_key",row.preference_key).is("deleted_at",null);
@@ -967,14 +987,14 @@ Deno.serve(async(req:Request)=>{
       return respond({erased:true,workspace_id:p.workspace_id});
     }
     if(op==="export_workspace_json"){
-      reqFields(p,["workspace_id"]);const tables=["workspaces","profiles","institutions","accounts","imports","transactions","transaction_splits","merchant_aliases","loans","loan_payments","insurance_policies","assets","liabilities","investments","investment_transactions","subscriptions","goals","correction_memory","duplicate_reviews","audit_log","watch_rules","watch_findings","data_freshness","households","household_members","profile_relationships","asset_owners","liability_owners","loan_borrowers","account_balances","credit_card_statements","budgets","recurring_items","financial_snapshots","processing_consents","sensitive_data_events","privacy_requests","breach_incidents","extracted_fields","confirmation_queue"], out:Record<string,any>={};
+      reqFields(p,["workspace_id"]);const tables=["workspaces","profiles","institutions","accounts","imports","transactions","transaction_splits","merchant_aliases","loans","loan_payments","insurance_policies","assets","liabilities","investments","investment_transactions","subscriptions","goals","correction_memory","duplicate_reviews","audit_log","watch_rules","watch_findings","data_freshness","households","household_members","profile_relationships","asset_owners","liability_owners","loan_borrowers","account_balances","credit_card_statements","budgets","recurring_items","financial_snapshots","processing_consents","sensitive_data_events","privacy_requests","breach_incidents","extracted_fields","confirmation_queue","income_sources","insurance_premiums","financial_preferences","recommendations","investment_allocation_targets"], out:Record<string,any>={};
       for(const table of tables){let q=db.from(table).select("*");q=table==="workspaces"?q.eq("id",p.workspace_id):q.eq("workspace_id",p.workspace_id);const r=await q;if(r.error)throw r.error;out[table]=r.data??[]}
       const owners=await db.from("account_owners").select("*,accounts!inner(workspace_id)").eq("accounts.workspace_id",p.workspace_id); if(owners.error) throw owners.error; out.account_owners=owners.data??[];
       return respond({schema_version:"0.1.0",exported_at:new Date().toISOString(),workspace_id:p.workspace_id,data:out});
     }
     if(op==="export_workspace_csv"){
       reqFields(p,["workspace_id"]);
-      const tables=["profiles","institutions","accounts","imports","transactions","transaction_splits","merchant_aliases","loans","loan_payments","insurance_policies","assets","liabilities","investments","investment_transactions","subscriptions","goals","correction_memory","duplicate_reviews","audit_log","watch_rules","watch_findings","data_freshness","households","household_members","profile_relationships","asset_owners","liability_owners","loan_borrowers","account_balances","credit_card_statements","budgets","recurring_items","financial_snapshots","processing_consents","sensitive_data_events","privacy_requests","breach_incidents","extracted_fields","confirmation_queue"];
+      const tables=["profiles","institutions","accounts","imports","transactions","transaction_splits","merchant_aliases","loans","loan_payments","insurance_policies","assets","liabilities","investments","investment_transactions","subscriptions","goals","correction_memory","duplicate_reviews","audit_log","watch_rules","watch_findings","data_freshness","households","household_members","profile_relationships","asset_owners","liability_owners","loan_borrowers","account_balances","credit_card_statements","budgets","recurring_items","financial_snapshots","processing_consents","sensitive_data_events","privacy_requests","breach_incidents","extracted_fields","confirmation_queue","income_sources","insurance_premiums","financial_preferences","recommendations","investment_allocation_targets"];
       const files:Record<string,string>={};
       const w=await db.from("workspaces").select("*").eq("id",p.workspace_id); if(w.error)throw w.error; files["workspaces.csv"]=rowsToCsv(w.data??[]);
       for(const table of tables){const r=await db.from(table).select("*").eq("workspace_id",p.workspace_id);if(r.error)throw r.error;files[table+".csv"]=rowsToCsv(r.data??[])}
