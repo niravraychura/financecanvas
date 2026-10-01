@@ -9,13 +9,14 @@ FinanceCanvas is a portable Personal CFO skill backed by a structured financial 
 
 ## Connection mode
 
-Prefer an explicitly authorized first-party/host Supabase connector when one is already connected.
+Use an explicitly authorized Supabase connector for **owner/developer maintenance** when available. Do not duplicate Supabase secrets into a local file merely because the connector exists.
 
-- Do **not** ask the user for Supabase passwords, service-role keys, secret keys, database URLs containing credentials, or a local `.env` when the authorized connector can perform the required operation.
-- Do **not** copy connector credentials into chat, files, memory, database rows, or source control.
-- Use the controlled FinanceCanvas API only when a connector is unavailable or when an external client/LLM needs a stable adapter.
-- Local configuration, when required, must contain only the minimum client credential necessary for that adapter and must remain outside source control.
-- Never weaken database integrity rules merely because direct connector access is available: duplicate review, confirmation, deletion, and audit rules still apply.
+- Do **not** ask the user to paste Supabase passwords, server keys, or database credentials into chat.
+- Do **not** copy connector credentials into files, memory, database rows, logs, or source control.
+- For normal FinanceCanvas runtime use by an LLM/user, prefer the controlled FinanceCanvas API or another least-privilege connector exposing only approved operations.
+- Do not treat a general project-admin Supabase connector as the normal end-user data path: direct administrative SQL can bypass application confirmation and duplicate controls.
+- Local configuration, if an external client truly requires it, must contain only the minimum runtime credential and stay outside source control.
+- Duplicate review, confirmation, deletion, audit, and sensitive-data rules remain mandatory regardless of access path.
 
 ## Sensitive-data warning and minimization
 
