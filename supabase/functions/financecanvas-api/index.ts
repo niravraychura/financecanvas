@@ -112,7 +112,7 @@ function requiredScope(op:string){
   if(["create_api_key","revoke_api_key"].includes(op)) return "admin";
   if(["export_workspace_json","export_workspace_csv"].includes(op)) return "export";
   if(["create_watch_rule","run_watch_checks"].includes(op)) return "watch";
-  if(["initialize_workspace","create_profile","create_account","create_record","commit_transactions","request_edit","request_delete","confirm_pending_operation","request_workspace_erasure","confirm_workspace_erasure"].includes(op)) return "write";
+  if(["initialize_workspace","create_profile","create_account","create_record","commit_transactions","request_edit","request_delete","confirm_pending_operation","request_workspace_erasure","confirm_workspace_erasure","upsert_financial_preference","record_recommendation"].includes(op)) return "write";
   return "read";
 }
 function csvEscape(v:any){
@@ -439,6 +439,236 @@ Deno.serve(async(req:Request)=>{
         await db.from("pending_operations").update({status:"applied",applied_at:new Date().toISOString()}).eq("id",o.id);return respond({applied:true});
       }
     }
+    if(op==="check_import_hash"){
+      reqFields(p,["workspace_id","source_hash"]);
+      const hash=String(p.source_hash).trim().toLowerCase();
+      if(!/^[0-9a-f]{64}$/.test(hash)) throw new Error("source_hash must be a SHA-256 hex digest");
+      const r=await db.from("imports").select("id,account_id,profile_id,source_type,original_filename,statement_start,statement_end,status,record_count,reconciliation_status,created_at,committed_at,completed_at")
+        .eq("workspace_id",p.workspace_id).eq("source_hash",hash).is("deleted_at",null).order("created_at",{ascending:false});
+      if(r.error)throw r.error;
+      return respond({duplicate_found:(r.data?.length??0)>0,matches:r.data??[]});
+    }
+
+    if(op==="get_historical_balance"){
+      reqFields(p,["workspace_id","account_id","date"]);
+      await assertIdsInWorkspace(db,"accounts",[p.account_id],p.workspace_id);
+      const a=await db.from("accounts").select("id,name,account_type,currency").eq("workspace_id",p.workspace_id).eq("id",p.account_id).single();
+      if(a.error)throw a.error;
+      const target=String(p.date);
+
+      const running=await db.from("transactions").select("id,posted_date,source_sequence,balance_after,currency,import_id")
+        .eq("workspace_id",p.workspace_id).eq("account_id",p.account_id).eq("posted_date",target)
+        .not("balance_after","is",null).is("deleted_at",null)
+        .order("source_sequence",{ascending:false,nullsFirst:false}).limit(1);
+      if(running.error)throw running.error;
+      if(running.data?.length){
+        const t=running.data[0];
+        return respond({
+          account:a.data,date:target,balance:Number(t.balance_after),currency:t.currency,
+          method:"statement_running_balance",confidence:"exact_from_confirmed_running_balance",
+          evidence:{transaction_id:t.id,import_id:t.import_id,posted_date:t.posted_date,source_sequence:t.source_sequence}
+        });
+      }
+
+      const prior=await db.from("account_balances").select("*")
+        .eq("workspace_id",p.workspace_id).eq("account_id",p.account_id).lte("balance_date",target)
+        .eq("confirmed",true).is("deleted_at",null)
+        .order("balance_date",{ascending:false}).limit(1);
+      if(prior.error)throw prior.error;
+
+      let anchor:any=null, direction:"forward"|"backward"="forward";
+      if(prior.data?.length) anchor=prior.data[0];
+      if(!anchor){
+        const next=await db.from("account_balances").select("*")
+          .eq("workspace_id",p.workspace_id).eq("account_id",p.account_id).gte("balance_date",target)
+          .eq("confirmed",true).is("deleted_at",null).order("balance_date",{ascending:true}).limit(1);
+        if(next.error)throw next.error;
+        if(next.data?.length){anchor=next.data[0];direction="backward";}
+      }
+      if(!anchor) return respond({account:a.data,date:target,balance:null,currency:a.data.currency,method:"insufficient_data",confidence:"insufficient",reason:"No confirmed running balance or account-balance anchor is available to reconstruct this date."});
+
+      let q=db.from("transactions").select("id,posted_date,source_sequence,amount,direction,currency,import_id")
+        .eq("workspace_id",p.workspace_id).eq("account_id",p.account_id).is("deleted_at",null);
+      if(direction==="forward"){
+        const includeAnchorDay=anchor.balance_type==="opening";
+        q=q.gte("posted_date",includeAnchorDay?anchor.balance_date:new Date(new Date(anchor.balance_date+"T00:00:00Z").getTime()+86400000).toISOString().slice(0,10)).lte("posted_date",target);
+      } else {
+        q=q.gt("posted_date",target).lte("posted_date",anchor.balance_date);
+      }
+      const txq=await q.order("posted_date",{ascending:true}).order("source_sequence",{ascending:true,nullsFirst:true});
+      if(txq.error)throw txq.error;
+
+      let balance=Number(anchor.balance);
+      if(direction==="forward"){
+        for(const t of txq.data??[]) balance+=txnDelta(a.data.account_type,t.direction,Number(t.amount));
+      } else {
+        for(const t of [...(txq.data??[])].reverse()) balance-=txnDelta(a.data.account_type,t.direction,Number(t.amount));
+      }
+
+      const coverage=await db.from("imports").select("id,statement_start,statement_end,status,reconciliation_status")
+        .eq("workspace_id",p.workspace_id).eq("account_id",p.account_id)
+        .in("status",["committed","completed"])
+        .lte("statement_start",target).gte("statement_end",target)
+        .order("statement_end",{ascending:false}).limit(5);
+      if(coverage.error)throw coverage.error;
+      const verified=(coverage.data??[]).some((x:any)=>x.reconciliation_status==="passed");
+      return respond({
+        account:a.data,date:target,balance:Number(balance.toFixed(4)),currency:anchor.currency??a.data.currency,
+        method:"reconstructed_from_confirmed_anchor",confidence:verified?"high_reconciled_statement":"reconstructed_unverified_coverage",
+        evidence:{anchor:{id:anchor.id,date:anchor.balance_date,type:anchor.balance_type,balance:anchor.balance},transaction_ids:(txq.data??[]).map((x:any)=>x.id),covering_imports:coverage.data??[]},
+        warning:verified?null:"The arithmetic is deterministic, but no reconciled import covering the target date was found. Treat this as reconstructed rather than bank-confirmed."
+      });
+    }
+
+    if(op==="detect_recurring_patterns"){
+      reqFields(p,["workspace_id"]);
+      const lookback=Math.max(60,Math.min(Number(p.lookback_days??365),730));
+      const minCount=Math.max(3,Math.min(Number(p.min_occurrences??3),12));
+      const from=new Date();from.setUTCDate(from.getUTCDate()-lookback);
+      let q=db.from("transactions").select("id,profile_id,account_id,posted_date,amount,currency,direction,merchant_normalized,raw_description,category,subcategory")
+        .eq("workspace_id",p.workspace_id).is("deleted_at",null).gte("posted_date",from.toISOString().slice(0,10)).order("posted_date");
+      if(p.profile_id)q=q.eq("profile_id",p.profile_id);
+      const r=await q;if(r.error)throw r.error;
+      const groups=new Map<string,any[]>();
+      for(const t of r.data??[]){
+        if(t.direction==="transfer")continue;
+        const merchant=norm(t.merchant_normalized??t.raw_description);
+        if(!merchant)continue;
+        const k=[t.profile_id??"",t.account_id,t.currency,t.direction,merchant].join("|");
+        groups.set(k,[...(groups.get(k)??[]),t]);
+      }
+      const patterns:any[]=[];
+      for(const rows of groups.values()){
+        if(rows.length<minCount)continue;
+        rows.sort((x,y)=>String(x.posted_date).localeCompare(String(y.posted_date)));
+        const gaps=[];for(let i=1;i<rows.length;i++)gaps.push(daysBetween(rows[i-1].posted_date,rows[i].posted_date));
+        const medGap=median(gaps); if(medGap<5||medGap>400)continue;
+        const amounts=rows.map(x=>Number(x.amount)), medAmount=median(amounts);
+        const deviations=amounts.map(x=>medAmount?Math.abs(x-medAmount)/medAmount:0);
+        const stableAmount=median(deviations)<=0.15;
+        const frequency=medGap>=25&&medGap<=35?"monthly":medGap>=6&&medGap<=8?"weekly":medGap>=80&&medGap<=100?"quarterly":medGap>=350&&medGap<=380?"annual":"custom";
+        patterns.push({
+          profile_id:rows[0].profile_id,account_id:rows[0].account_id,
+          merchant:rows[0].merchant_normalized??rows[0].raw_description,
+          currency:rows[0].currency,direction:rows[0].direction,category:rows[0].category,subcategory:rows[0].subcategory,
+          occurrences:rows.length,first_date:rows[0].posted_date,last_date:rows.at(-1).posted_date,
+          median_interval_days:medGap,frequency,median_amount:Number(medAmount.toFixed(2)),amount_stable:stableAmount,
+          confidence:Number(Math.min(0.99,0.55+Math.min(rows.length,8)*0.05+(stableAmount?0.1:0)).toFixed(2)),
+          transaction_ids:rows.map(x=>x.id)
+        });
+      }
+      patterns.sort((a,b)=>b.confidence-a.confidence||b.occurrences-a.occurrences);
+      return respond({patterns:patterns.slice(0,Math.min(Number(p.limit??100),300)),note:"These are detection suggestions only. Persist a recurring item only after user confirmation."});
+    }
+
+    if(op==="get_financial_timeline"){
+      reqFields(p,["workspace_id"]);
+      const from=p.from_date??"1900-01-01", to=p.to_date??"2999-12-31", limit=Math.min(Number(p.limit??500),2000);
+      const [tx,bal,lp,ip,it,cc,sn]=await Promise.all([
+        db.from("transactions").select("id,profile_id,account_id,posted_date,amount,currency,direction,merchant_normalized,raw_description,category").eq("workspace_id",p.workspace_id).is("deleted_at",null).gte("posted_date",from).lte("posted_date",to),
+        db.from("account_balances").select("id,account_id,balance_date,balance,currency,balance_type").eq("workspace_id",p.workspace_id).is("deleted_at",null).gte("balance_date",from).lte("balance_date",to),
+        db.from("loan_payments").select("id,loan_id,payment_date,amount,principal_component,interest_component").eq("workspace_id",p.workspace_id).gte("payment_date",from).lte("payment_date",to),
+        db.from("insurance_premiums").select("id,policy_id,premium_date,amount,currency").eq("workspace_id",p.workspace_id).gte("premium_date",from).lte("premium_date",to),
+        db.from("investment_transactions").select("id,investment_id,event_type,event_date,quantity,price,amount,fees").eq("workspace_id",p.workspace_id).gte("event_date",from).lte("event_date",to),
+        db.from("credit_card_statements").select("id,account_id,statement_end,due_date,total_due,currency,payment_status").eq("workspace_id",p.workspace_id).is("deleted_at",null).gte("statement_end",from).lte("statement_end",to),
+        db.from("financial_snapshots").select("id,profile_id,snapshot_date,assets_total,liabilities_total,net_worth,base_currency").eq("workspace_id",p.workspace_id).is("deleted_at",null).gte("snapshot_date",from).lte("snapshot_date",to)
+      ]);
+      for(const r of [tx,bal,lp,ip,it,cc,sn])if(r.error)throw r.error;
+      const events:any[]=[];
+      for(const x of tx.data??[])events.push({date:x.posted_date,type:"transaction",id:x.id,data:x});
+      for(const x of bal.data??[])events.push({date:x.balance_date,type:"account_balance",id:x.id,data:x});
+      for(const x of lp.data??[])events.push({date:x.payment_date,type:"loan_payment",id:x.id,data:x});
+      for(const x of ip.data??[])events.push({date:x.premium_date,type:"insurance_premium",id:x.id,data:x});
+      for(const x of it.data??[])events.push({date:x.event_date,type:"investment_event",id:x.id,data:x});
+      for(const x of cc.data??[])events.push({date:x.statement_end,type:"credit_card_statement",id:x.id,data:x});
+      for(const x of sn.data??[])events.push({date:x.snapshot_date,type:"financial_snapshot",id:x.id,data:x});
+      events.sort((a,b)=>String(a.date).localeCompare(String(b.date)));
+      return respond({events:events.slice(-limit),from_date:from,to_date:to});
+    }
+
+    if(op==="get_ownership_graph"){
+      reqFields(p,["workspace_id"]);
+      const [profiles,households,hm,rel,accounts,ao,assets,aso,liabs,lo,loans,lb]=await Promise.all([
+        db.from("profiles").select("id,display_name,is_household").eq("workspace_id",p.workspace_id).is("deleted_at",null),
+        db.from("households").select("id,name").eq("workspace_id",p.workspace_id).is("deleted_at",null),
+        db.from("household_members").select("*").eq("workspace_id",p.workspace_id).is("deleted_at",null),
+        db.from("profile_relationships").select("*").eq("workspace_id",p.workspace_id).is("deleted_at",null),
+        db.from("accounts").select("id,name,account_type,currency").eq("workspace_id",p.workspace_id).is("deleted_at",null),
+        db.from("account_owners").select("account_id,profile_id,ownership_percent,is_primary,accounts!inner(workspace_id)").eq("accounts.workspace_id",p.workspace_id),
+        db.from("assets").select("id,name,asset_type,currency,value").eq("workspace_id",p.workspace_id).is("deleted_at",null),
+        db.from("asset_owners").select("*").eq("workspace_id",p.workspace_id).is("deleted_at",null),
+        db.from("liabilities").select("id,name,liability_type,currency,outstanding_amount").eq("workspace_id",p.workspace_id).is("deleted_at",null),
+        db.from("liability_owners").select("*").eq("workspace_id",p.workspace_id).is("deleted_at",null),
+        db.from("loans").select("id,name,loan_type,currency,outstanding_principal").eq("workspace_id",p.workspace_id).is("deleted_at",null),
+        db.from("loan_borrowers").select("*").eq("workspace_id",p.workspace_id).is("deleted_at",null)
+      ]);
+      for(const r of [profiles,households,hm,rel,accounts,ao,assets,aso,liabs,lo,loans,lb])if(r.error)throw r.error;
+      const nodes:any[]=[
+        ...(profiles.data??[]).map((x:any)=>({id:"profile:"+x.id,type:"profile",label:x.display_name,data:x})),
+        ...(households.data??[]).map((x:any)=>({id:"household:"+x.id,type:"household",label:x.name,data:x})),
+        ...(accounts.data??[]).map((x:any)=>({id:"account:"+x.id,type:"account",label:x.name,data:x})),
+        ...(assets.data??[]).map((x:any)=>({id:"asset:"+x.id,type:"asset",label:x.name,data:x})),
+        ...(liabs.data??[]).map((x:any)=>({id:"liability:"+x.id,type:"liability",label:x.name,data:x})),
+        ...(loans.data??[]).map((x:any)=>({id:"loan:"+x.id,type:"loan",label:x.name,data:x}))
+      ];
+      const edges:any[]=[
+        ...(hm.data??[]).map((x:any)=>({from:"profile:"+x.profile_id,to:"household:"+x.household_id,type:"household_member",data:x})),
+        ...(rel.data??[]).map((x:any)=>({from:"profile:"+x.profile_id,to:"profile:"+x.related_profile_id,type:x.relationship_type,data:x})),
+        ...(ao.data??[]).map((x:any)=>({from:"profile:"+x.profile_id,to:"account:"+x.account_id,type:"owns_account",data:{ownership_percent:x.ownership_percent,is_primary:x.is_primary}})),
+        ...(aso.data??[]).map((x:any)=>({from:"profile:"+x.profile_id,to:"asset:"+x.asset_id,type:"owns_asset",data:{ownership_percent:x.ownership_percent,is_primary:x.is_primary}})),
+        ...(lo.data??[]).map((x:any)=>({from:"profile:"+x.profile_id,to:"liability:"+x.liability_id,type:"responsible_for_liability",data:{responsibility_percent:x.responsibility_percent,is_primary:x.is_primary}})),
+        ...(lb.data??[]).map((x:any)=>({from:"profile:"+x.profile_id,to:"loan:"+x.loan_id,type:x.borrower_role,data:{responsibility_percent:x.responsibility_percent}}))
+      ];
+      return respond({nodes,edges});
+    }
+
+    if(op==="get_evidence_bundle"){
+      reqFields(p,["workspace_id"]);
+      const limit=Math.min(Number(p.limit??500),2000);
+      let q=db.from("transactions").select("id,profile_id,account_id,import_id,posted_date,transaction_date,amount,currency,direction,merchant_normalized,raw_description,category,subcategory,purpose,confidence,confirmation_status,balance_after,source_sequence")
+        .eq("workspace_id",p.workspace_id).is("deleted_at",null).order("posted_date",{ascending:false}).limit(limit);
+      if(p.from_date)q=q.gte("posted_date",p.from_date); if(p.to_date)q=q.lte("posted_date",p.to_date);
+      if(p.profile_id)q=q.eq("profile_id",p.profile_id); if(p.account_id)q=q.eq("account_id",p.account_id);
+      if(p.category)q=q.eq("category",p.category); if(p.currency)q=q.eq("currency",String(p.currency).toUpperCase());
+      const tx=await q;if(tx.error)throw tx.error;
+      const accountIds=[...new Set((tx.data??[]).map((x:any)=>x.account_id))], importIds=[...new Set((tx.data??[]).map((x:any)=>x.import_id).filter(Boolean))];
+      const [accounts,imports,fresh]=await Promise.all([
+        accountIds.length?db.from("accounts").select("id,name,account_type,currency,balance_as_of").eq("workspace_id",p.workspace_id).in("id",accountIds):Promise.resolve({data:[],error:null}),
+        importIds.length?db.from("imports").select("id,source_type,statement_start,statement_end,status,reconciliation_status,committed_at,completed_at").eq("workspace_id",p.workspace_id).in("id",importIds):Promise.resolve({data:[],error:null}),
+        db.from("data_freshness").select("account_id,confirmed_through,last_import_at,expected_frequency_days").eq("workspace_id",p.workspace_id)
+      ]);
+      for(const r of [accounts,imports,fresh])if(r.error)throw r.error;
+      return respond({
+        evidence:{transactions:tx.data??[],accounts:accounts.data??[],imports:imports.data??[],freshness:fresh.data??[]},
+        included:{transaction_count:tx.data?.length??0,transaction_ids:(tx.data??[]).map((x:any)=>x.id),account_ids:accountIds,import_ids:importIds},
+        filters:{from_date:p.from_date??null,to_date:p.to_date??null,profile_id:p.profile_id??null,account_id:p.account_id??null,category:p.category??null,currency:p.currency??null}
+      });
+    }
+
+    if(op==="upsert_financial_preference"){
+      reqFields(p,["workspace_id","preference_key","preference_value"]);
+      await assertIdsInWorkspace(db,"profiles",[p.profile_id],p.workspace_id);
+      const row={workspace_id:p.workspace_id,profile_id:p.profile_id??null,preference_key:String(p.preference_key),preference_group:String(p.preference_group??"general"),preference_value:p.preference_value,source:p.source??"user_confirmed",confidence:p.confidence??null,confirmed:p.confirmed??true,deleted_at:null};
+      let q=db.from("financial_preferences").select("id").eq("workspace_id",p.workspace_id).eq("preference_key",row.preference_key).is("deleted_at",null);
+      q=p.profile_id?q.eq("profile_id",p.profile_id):q.is("profile_id",null);
+      const existing=await q.maybeSingle();if(existing.error)throw existing.error;
+      let result;
+      if(existing.data) result=await db.from("financial_preferences").update(row).eq("id",existing.data.id).eq("workspace_id",p.workspace_id).select().single();
+      else result=await db.from("financial_preferences").insert(row).select().single();
+      if(result.error)throw result.error;
+      await db.from("audit_log").insert({workspace_id:p.workspace_id,action:existing.data?"update_financial_preference":"create_financial_preference",target_table:"financial_preferences",target_id:result.data.id,after_snapshot:auditSafe(result.data)});
+      return respond({preference:result.data});
+    }
+
+    if(op==="record_recommendation"){
+      reqFields(p,["workspace_id","recommendation_type","title","summary"]);
+      await assertIdsInWorkspace(db,"profiles",[p.profile_id],p.workspace_id);
+      const row={workspace_id:p.workspace_id,profile_id:p.profile_id??null,recommendation_type:p.recommendation_type,title:p.title,summary:p.summary,rationale:p.rationale??null,evidence:p.evidence??{},assumptions:p.assumptions??{},confidence:p.confidence??null,status:p.status??"active",valid_until:p.valid_until??null};
+      const r=await db.from("recommendations").insert(row).select().single();if(r.error)throw r.error;
+      await db.from("audit_log").insert({workspace_id:p.workspace_id,action:"record_recommendation",target_table:"recommendations",target_id:r.data.id,after_snapshot:auditSafe(r.data)});
+      return respond({recommendation:r.data});
+    }
+
     if(op==="get_financial_summary"){
       reqFields(p,["workspace_id"]);const ws=p.workspace_id;
       const [a,l,ac,t,bg,ri,sn]=await Promise.all([
