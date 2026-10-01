@@ -103,9 +103,27 @@ async function auth(req:Request,db:any){
   const token=h.startsWith("Bearer ")?h.slice(7).trim():"";
   if(!token.startsWith("fc_")) throw Object.assign(new Error("Unauthorized"),{status:401});
   const hash=await sha256(token);
-  const {data,error}=await db.from("financecanvas_api_keys").select("id").eq("key_hash",hash).eq("active",true).is("revoked_at",null).maybeSingle();
+  const {data,error}=await db.from("financecanvas_api_keys").select("id,workspace_id,scopes").eq("key_hash",hash).eq("active",true).is("revoked_at",null).maybeSingle();
   if(error||!data) throw Object.assign(new Error("Unauthorized"),{status:401});
   await db.from("financecanvas_api_keys").update({last_used_at:new Date().toISOString()}).eq("id",data.id);
+  return data;
+}
+function requiredScope(op:string){
+  if(["create_api_key","revoke_api_key"].includes(op)) return "admin";
+  if(["export_workspace_json","export_workspace_csv"].includes(op)) return "export";
+  if(["create_watch_rule","run_watch_checks"].includes(op)) return "watch";
+  if(["initialize_workspace","create_profile","create_account","create_record","commit_transactions","request_edit","request_delete","confirm_pending_operation","request_workspace_erasure","confirm_workspace_erasure"].includes(op)) return "write";
+  return "read";
+}
+function csvEscape(v:any){
+  if(v===null||v===undefined)return "";
+  const s=typeof v==="object"?JSON.stringify(v):String(v);
+  return /[",\n\r]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s;
+}
+function rowsToCsv(rows:any[]){
+  if(!rows.length)return "";
+  const headers=[...new Set(rows.flatMap(r=>Object.keys(r)))];
+  return headers.map(csvEscape).join(",")+"\n"+rows.map(r=>headers.map(h=>csvEscape(r[h])).join(",")).join("\n");
 }
 async function nearMatches(db:any, ws:string, t:Record<string,any>) {
   const d=new Date(t.posted_date+"T00:00:00Z"), lo=new Date(d), hi=new Date(d);
@@ -122,11 +140,24 @@ Deno.serve(async(req:Request)=>{
   if(req.method!=="POST") return respond({error:"POST required"},405);
   try {
     const db=createClient(Deno.env.get("SUPABASE_URL")!,serverKey(),{auth:{persistSession:false,autoRefreshToken:false}});
-    await auth(req,db);
+    const identity=await auth(req,db);
     const body=await req.json(), op=String(body.operation??""), p=sanitizeValue((body.payload??{}) as Record<string,any>);
+    const need=requiredScope(op);
+    if(!identity.scopes?.includes(need) && !identity.scopes?.includes("admin")) throw Object.assign(new Error("API key lacks required scope: "+need),{status:403});
+    if(identity.workspace_id){
+      if(op==="initialization_status"){
+        p.workspace_id=identity.workspace_id;
+      } else if(p.workspace_id && String(p.workspace_id)!==String(identity.workspace_id)){
+        throw Object.assign(new Error("API key is scoped to a different workspace"),{status:403});
+      } else if(!p.workspace_id && !["create_api_key","revoke_api_key"].includes(op)){
+        p.workspace_id=identity.workspace_id;
+      }
+    }
 
     if(op==="initialization_status"){
-      const {data,error}=await db.from("workspaces").select("id,name,base_currency,is_default,initialized").order("created_at");
+      let q=db.from("workspaces").select("id,name,base_currency,is_default,initialized").order("created_at");
+      if(p.workspace_id) q=q.eq("id",p.workspace_id);
+      const {data,error}=await q;
       if(error)throw error; return respond({initialized:(data?.length??0)>0,workspaces:data??[]});
     }
     if(op==="initialize_workspace"){
@@ -142,7 +173,8 @@ Deno.serve(async(req:Request)=>{
     if(op==="create_api_key"){
       const raw=new Uint8Array(36);crypto.getRandomValues(raw);
       const token="fc_"+btoa(String.fromCharCode(...raw)).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
-      const {data,error}=await db.from("financecanvas_api_keys").insert({label:String(p.label??"rotated"),key_hash:await sha256(token)}).select("id,label,created_at").single();
+      const scopes=Array.isArray(p.scopes)&&p.scopes.length?p.scopes:["read","write","watch","export"];
+      const {data,error}=await db.from("financecanvas_api_keys").insert({label:String(p.label??"rotated"),key_hash:await sha256(token),workspace_id:p.workspace_id??null,scopes}).select("id,label,workspace_id,scopes,created_at").single();
       if(error)throw error;return respond({api_key:token,key:data,note:"Returned once; store outside source control."});
     }
     if(op==="revoke_api_key"){
@@ -332,11 +364,37 @@ Deno.serve(async(req:Request)=>{
     if(op==="list_watch_findings"){
       reqFields(p,["workspace_id"]);let q=db.from("watch_findings").select("*").eq("workspace_id",p.workspace_id).order("created_at",{ascending:false}).limit(Math.min(Number(p.limit??100),500));if(p.status)q=q.eq("status",p.status);if(p.severity)q=q.eq("severity",p.severity);const r=await q;if(r.error)throw r.error;return respond({findings:r.data??[]});
     }
+    if(op==="request_workspace_erasure"){
+      reqFields(p,["workspace_id","reason"]);
+      const w=await db.from("workspaces").select("id,name,base_currency").eq("id",p.workspace_id).single(); if(w.error)throw w.error;
+      const pending=await db.from("pending_operations").insert({workspace_id:p.workspace_id,operation_type:"permanent_delete_record",target_table:"workspaces",target_id:p.workspace_id,before_snapshot:w.data,reason:String(p.reason)}).select().single();
+      if(pending.error)throw pending.error;
+      return respond({pending_operation:pending.data,workspace:w.data,confirmation_required:true,warning:"Confirming permanently erases the workspace and all FinanceCanvas records linked to it. Export first if needed."});
+    }
+    if(op==="confirm_workspace_erasure"){
+      reqFields(p,["workspace_id","operation_id","confirmed"]);
+      const o=await db.from("pending_operations").select("*").eq("workspace_id",p.workspace_id).eq("id",p.operation_id).eq("target_table","workspaces").eq("operation_type","permanent_delete_record").single();
+      if(o.error)throw o.error;
+      if(o.data.status!=="pending")return respond({error:"Operation is "+o.data.status},409);
+      if(p.confirmed!==true){await db.from("pending_operations").update({status:"cancelled"}).eq("id",o.data.id);return respond({cancelled:true});}
+      if(new Date(o.data.expires_at).getTime()<Date.now()){return respond({error:"Pending operation expired"},409);}
+      const d=await db.from("workspaces").delete().eq("id",p.workspace_id); if(d.error)throw d.error;
+      return respond({erased:true,workspace_id:p.workspace_id});
+    }
     if(op==="export_workspace_json"){
       reqFields(p,["workspace_id"]);const tables=["workspaces","profiles","institutions","accounts","imports","transactions","transaction_splits","merchant_aliases","loans","loan_payments","insurance_policies","assets","liabilities","investments","investment_transactions","subscriptions","goals","correction_memory","duplicate_reviews","audit_log","watch_rules","watch_findings","data_freshness"], out:Record<string,any>={};
       for(const table of tables){let q=db.from(table).select("*");q=table==="workspaces"?q.eq("id",p.workspace_id):q.eq("workspace_id",p.workspace_id);const r=await q;if(r.error)throw r.error;out[table]=r.data??[]}
       const owners=await db.from("account_owners").select("*,accounts!inner(workspace_id)").eq("accounts.workspace_id",p.workspace_id); if(owners.error) throw owners.error; out.account_owners=owners.data??[];
       return respond({schema_version:"0.1.0",exported_at:new Date().toISOString(),workspace_id:p.workspace_id,data:out});
+    }
+    if(op==="export_workspace_csv"){
+      reqFields(p,["workspace_id"]);
+      const tables=["profiles","institutions","accounts","imports","transactions","transaction_splits","merchant_aliases","loans","loan_payments","insurance_policies","assets","liabilities","investments","investment_transactions","subscriptions","goals","correction_memory","duplicate_reviews","audit_log","watch_rules","watch_findings","data_freshness"];
+      const files:Record<string,string>={};
+      const w=await db.from("workspaces").select("*").eq("id",p.workspace_id); if(w.error)throw w.error; files["workspaces.csv"]=rowsToCsv(w.data??[]);
+      for(const table of tables){const r=await db.from(table).select("*").eq("workspace_id",p.workspace_id);if(r.error)throw r.error;files[table+".csv"]=rowsToCsv(r.data??[])}
+      const owners=await db.from("account_owners").select("*,accounts!inner(workspace_id)").eq("accounts.workspace_id",p.workspace_id); if(owners.error)throw owners.error; files["account_owners.csv"]=rowsToCsv(owners.data??[]);
+      return respond({schema_version:"0.1.0",exported_at:new Date().toISOString(),workspace_id:p.workspace_id,files});
     }
     return respond({error:"Unknown operation: "+op},404);
   } catch(e){
