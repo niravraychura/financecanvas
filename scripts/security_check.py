@@ -27,12 +27,19 @@ REQUIRED_FILES = {
     "CONTRIBUTING.md",
     "AGENTS.md",
     "ROADMAP.md",
+    "LICENSE",
+    "NOTICE",
+    "CITATION.cff",
+    "THIRD_PARTY.md",
+    "ADVANCED_SETUP.md",
     "INSTALL.md",
     "QUICKSTART.md",
     "ACCEPTANCE_TEST.md",
     "scripts/generate_api_key.py",
     "scripts/acceptance_test.py",
+    "scripts/package_skill.py",
     ".github/workflows/acceptance.yml",
+    ".github/workflows/skill-install.yml",
     "references/CALCULATION_RULES.md",
     "references/CATEGORIZATION_RULES.md",
     "references/IMPORT_RULES.md",
@@ -65,6 +72,8 @@ SECRET_PATTERNS = [
     ("non-empty FinanceCanvas key assignment", re.compile(r"FINANCECANVAS_API_KEY\s*=\s*[^\s#]{20,}")),
     ("non-empty Supabase server-key assignment", re.compile(r"SUPABASE_SERVICE_ROLE_KEY\s*=\s*[^\s#]{20,}")),
 ]
+
+CANONICAL_INSTALL = "npx skills add niravraychura/financecanvas --all -g"
 
 REQUIRED_SKILL_PHRASES = [
     "Exact duplicates must never be silently inserted",
@@ -151,7 +160,19 @@ def main() -> int:
             if pattern.search(content):
                 errors.append(f"Potential {label} found in tracked file: {rel}")
 
+    readme = text_of(ROOT / "README.md")
+    install_doc = text_of(ROOT / "INSTALL.md")
+    license_text = text_of(ROOT / "LICENSE")
+
+    if CANONICAL_INSTALL not in readme or CANONICAL_INSTALL not in install_doc:
+        errors.append("README.md and INSTALL.md must contain the canonical one-command installer")
+    if "Apache License" not in license_text or "Version 2.0" not in license_text:
+        errors.append("LICENSE must contain Apache License 2.0")
+
     skill = text_of(ROOT / "SKILL.md")
+    if "license: Apache-2.0" not in skill:
+        errors.append("SKILL.md must declare Apache-2.0 in Agent Skills frontmatter")
+
     for phrase in REQUIRED_SKILL_PHRASES:
         if phrase.lower() not in skill.lower():
             errors.append(f"SKILL.md missing required guardrail phrase: {phrase}")
