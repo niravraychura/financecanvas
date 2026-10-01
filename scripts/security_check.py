@@ -25,6 +25,12 @@ REQUIRED_FILES = {
     "INCIDENT_RESPONSE.md",
     "RELEASE_CHECKLIST.md",
     "CONTRIBUTING.md",
+    "AGENTS.md",
+    "ROADMAP.md",
+    "references/CALCULATION_RULES.md",
+    "references/CATEGORIZATION_RULES.md",
+    "references/IMPORT_RULES.md",
+    "references/API_OPERATIONS.md",
     "supabase/functions/financecanvas-api/index.ts",
 }
 
@@ -121,6 +127,8 @@ def main() -> int:
     for marker in REQUIRED_API_MARKERS:
         if marker not in api:
             errors.append(f"FinanceCanvas API missing required security marker: {marker}")
+    if 'npm:@supabase/supabase-js@2"' in api:
+        errors.append("FinanceCanvas API uses a floating Supabase JS major version instead of an exact reviewed version")
 
     for rel in files:
         if not rel.startswith("supabase/migrations/") or not rel.endswith(".sql"):
