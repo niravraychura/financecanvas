@@ -1,0 +1,259 @@
+import { createClient } from "npm:@supabase/supabase-js@2";
+
+const cors = {
+  "access-control-allow-origin": "*",
+  "access-control-allow-headers": "authorization, content-type",
+  "access-control-allow-methods": "POST, OPTIONS",
+};
+const editable = new Set(["workspaces","profiles","institutions","accounts","transactions","merchant_aliases","loans","insurance_policies","assets","liabilities","investments","subscriptions","goals","watch_rules","data_freshness"]);
+const deletable = new Set(["profiles","institutions","accounts","transactions","merchant_aliases","loans","insurance_policies","assets","liabilities","investments","subscriptions","goals","watch_rules"]);
+
+function respond(body: unknown, status=200) {
+  return new Response(JSON.stringify(body), {status, headers:{...cors,"content-type":"application/json; charset=utf-8"}});
+}
+function serverKey() {
+  const modern=Deno.env.get("SUPABASE_SECRET_KEYS");
+  if (modern) {
+    const keys=JSON.parse(modern);
+    const key=keys.default ?? Object.values(keys)[0];
+    if (typeof key==="string" && key) return key;
+  }
+  const legacy=Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  if (legacy) return legacy;
+  throw new Error("Supabase server secret unavailable");
+}
+async function sha256(v:string) {
+  const d=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(v));
+  return [...new Uint8Array(d)].map(x=>x.toString(16).padStart(2,"0")).join("");
+}
+function norm(v:unknown){return String(v??"").trim().toLowerCase().replace(/\s+/g," ")}
+function reqFields(p:Record<string,any>, fs:string[]){for(const f of fs) if(p[f]===undefined||p[f]===null||p[f]==="") throw new Error("Missing required field: "+f)}
+async function fp(t:Record<string,any>) {
+  return sha256(JSON.stringify({
+    workspace_id:norm(t.workspace_id), account_id:norm(t.account_id), posted_date:norm(t.posted_date),
+    amount:Number(t.amount??0).toFixed(2), currency:String(t.currency??"INR").toUpperCase(),
+    direction:norm(t.direction), reference:norm(t.transaction_reference), raw_description:norm(t.raw_description)
+  }));
+}
+function words(v:unknown){return new Set(norm(v).split(/[^a-z0-9]+/).filter(x=>x.length>1))}
+function sim(a:unknown,b:unknown){
+  const x=words(a), y=words(b); if(!x.size&&!y.size)return 1;
+  const i=[...x].filter(z=>y.has(z)).length; return i/new Set([...x,...y]).size;
+}
+function differences(a:Record<string,any>,b:Record<string,any>){
+  const out:Record<string,any>={};
+  for(const f of ["posted_date","transaction_date","amount","currency","direction","raw_description","merchant_normalized","transaction_reference","category","subcategory","purpose","profile_id","account_id"])
+    if(JSON.stringify(a[f]??null)!==JSON.stringify(b[f]??null)) out[f]={existing:a[f]??null,incoming:b[f]??null};
+  return out;
+}
+async function auth(req:Request,db:any){
+  const h=req.headers.get("authorization")??"";
+  const token=h.startsWith("Bearer ")?h.slice(7).trim():"";
+  if(!token.startsWith("fc_")) throw Object.assign(new Error("Unauthorized"),{status:401});
+  const hash=await sha256(token);
+  const {data,error}=await db.from("financecanvas_api_keys").select("id").eq("key_hash",hash).eq("active",true).is("revoked_at",null).maybeSingle();
+  if(error||!data) throw Object.assign(new Error("Unauthorized"),{status:401});
+  await db.from("financecanvas_api_keys").update({last_used_at:new Date().toISOString()}).eq("id",data.id);
+}
+async function nearMatches(db:any, ws:string, t:Record<string,any>) {
+  const d=new Date(t.posted_date+"T00:00:00Z"), lo=new Date(d), hi=new Date(d);
+  lo.setUTCDate(lo.getUTCDate()-3); hi.setUTCDate(hi.getUTCDate()+3);
+  const {data,error}=await db.from("transactions").select("*").eq("workspace_id",ws).eq("account_id",t.account_id)
+    .eq("currency",String(t.currency??"INR").toUpperCase()).eq("direction",t.direction).eq("amount",t.amount)
+    .gte("posted_date",lo.toISOString().slice(0,10)).lte("posted_date",hi.toISOString().slice(0,10)).is("deleted_at",null).limit(20);
+  if(error) throw error;
+  return (data??[]).filter((x:any)=>sim(x.merchant_normalized??x.raw_description,t.merchant_normalized??t.raw_description)>=0.5);
+}
+
+Deno.serve(async(req:Request)=>{
+  if(req.method==="OPTIONS") return new Response("ok",{headers:cors});
+  if(req.method!=="POST") return respond({error:"POST required"},405);
+  try {
+    const db=createClient(Deno.env.get("SUPABASE_URL")!,serverKey(),{auth:{persistSession:false,autoRefreshToken:false}});
+    await auth(req,db);
+    const body=await req.json(), op=String(body.operation??""), p=(body.payload??{}) as Record<string,any>;
+
+    if(op==="initialization_status"){
+      const {data,error}=await db.from("workspaces").select("id,name,base_currency,is_default,initialized").order("created_at");
+      if(error)throw error; return respond({initialized:(data?.length??0)>0,workspaces:data??[]});
+    }
+    if(op==="initialize_workspace"){
+      const useDefault=Boolean(p.use_default), name=useDefault?"Personal Workspace":String(p.name??"").trim();
+      if(!name)throw new Error("Workspace name required unless use_default=true");
+      const {data:w,error}=await db.from("workspaces").insert({name,base_currency:String(p.base_currency??"INR").toUpperCase(),is_default:useDefault}).select().single();
+      if(error)throw error;
+      let profile=null;
+      if(p.first_profile_name){const r=await db.from("profiles").insert({workspace_id:w.id,display_name:String(p.first_profile_name)}).select().single();if(r.error)throw r.error;profile=r.data}
+      await db.from("audit_log").insert({workspace_id:w.id,action:"initialize_workspace",target_table:"workspaces",target_id:w.id,after_snapshot:w});
+      return respond({workspace:w,profile});
+    }
+    if(op==="create_api_key"){
+      const raw=new Uint8Array(36);crypto.getRandomValues(raw);
+      const token="fc_"+btoa(String.fromCharCode(...raw)).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
+      const {data,error}=await db.from("financecanvas_api_keys").insert({label:String(p.label??"rotated"),key_hash:await sha256(token)}).select("id,label,created_at").single();
+      if(error)throw error;return respond({api_key:token,key:data,note:"Returned once; store outside source control."});
+    }
+    if(op==="revoke_api_key"){
+      reqFields(p,["key_id"]);const {data,error}=await db.from("financecanvas_api_keys").update({active:false,revoked_at:new Date().toISOString()}).eq("id",p.key_id).select("id,label,active,revoked_at").single();
+      if(error)throw error;return respond({revoked:data});
+    }
+    if(op==="list_profiles"){
+      reqFields(p,["workspace_id"]);const {data,error}=await db.from("profiles").select("*").eq("workspace_id",p.workspace_id).is("deleted_at",null).order("created_at");
+      if(error)throw error;return respond({profiles:data??[]});
+    }
+    if(op==="create_profile"){
+      reqFields(p,["workspace_id","display_name"]);
+      const row={workspace_id:p.workspace_id,display_name:p.display_name,relationship:p.relationship??null,is_household:Boolean(p.is_household)};
+      const {data,error}=await db.from("profiles").insert(row).select().single();if(error)throw error;
+      await db.from("audit_log").insert({workspace_id:p.workspace_id,action:"create_profile",target_table:"profiles",target_id:data.id,after_snapshot:data});
+      return respond({profile:data});
+    }
+    if(op==="list_accounts"){
+      reqFields(p,["workspace_id"]);let q=db.from("accounts").select("*").eq("workspace_id",p.workspace_id).is("deleted_at",null).order("name");
+      if(p.account_type)q=q.eq("account_type",p.account_type);const {data,error}=await q;if(error)throw error;return respond({accounts:data??[]});
+    }
+    if(op==="create_account"){
+      reqFields(p,["workspace_id","name","account_type"]);
+      const row={workspace_id:p.workspace_id,institution_id:p.institution_id??null,name:p.name,account_type:p.account_type,currency:String(p.currency??"INR").toUpperCase(),identifier_last4:p.identifier_last4??null,current_balance:p.current_balance??null,balance_as_of:p.balance_as_of??null,metadata:p.metadata??{}};
+      const {data,error}=await db.from("accounts").insert(row).select().single();if(error)throw error;
+      await db.from("audit_log").insert({workspace_id:p.workspace_id,action:"create_account",target_table:"accounts",target_id:data.id,after_snapshot:data});
+      return respond({account:data});
+    }
+    if(op==="preview_transaction_import"){
+      reqFields(p,["workspace_id","transactions"]);const results=[];
+      for(const src of p.transactions as Record<string,any>[]){
+        const t={...src,workspace_id:p.workspace_id};reqFields(t,["account_id","posted_date","amount","direction"]);const base=await fp(t);
+        const ex=await db.from("transactions").select("*").eq("workspace_id",p.workspace_id).eq("base_fingerprint",base).is("deleted_at",null).limit(1);if(ex.error)throw ex.error;
+        if(ex.data?.length){results.push({client_id:src.client_id??null,status:"exact_duplicate",base_fingerprint:base,existing:ex.data[0],difference:differences(ex.data[0],t)});continue}
+        const near=await nearMatches(db,p.workspace_id,t);
+        if(near.length)results.push({client_id:src.client_id??null,status:"near_duplicate",base_fingerprint:base,matches:near.map((x:any)=>({existing:x,difference:differences(x,t)}))});
+        else results.push({client_id:src.client_id??null,status:"ready",base_fingerprint:base});
+      }
+      return respond({results});
+    }
+    if(op==="commit_transactions"){
+      reqFields(p,["workspace_id","transactions","final_confirmation"]);
+      if(p.final_confirmation!==true)return respond({error:"Final user confirmation is required before commit."},409);
+      const resolutions=new Map((p.duplicate_resolutions??[]).map((r:any)=>[String(r.client_id),r]));
+      const inserted=[],skipped=[],conflicts=[];
+      for(const src of p.transactions as Record<string,any>[]){
+        const t={...src,workspace_id:p.workspace_id}, client=String(src.client_id??"");reqFields(t,["account_id","posted_date","amount","direction"]);
+        const base=await fp(t), ex=await db.from("transactions").select("*").eq("workspace_id",p.workspace_id).eq("base_fingerprint",base).is("deleted_at",null).limit(1);if(ex.error)throw ex.error;
+        let fingerprint=base, duplicateOf=null, overrideReason=null;
+        if(ex.data?.length){
+          const r:any=resolutions.get(client);
+          if(!r){conflicts.push({client_id:client,type:"exact",existing:ex.data[0]});continue}
+          if(["skip","keep_existing","cancel"].includes(r.decision)){
+            await db.from("duplicate_reviews").insert({workspace_id:p.workspace_id,existing_transaction_id:ex.data[0].id,incoming_fingerprint:base,duplicate_type:"exact",decision:r.decision==="cancel"?"cancel":"skip",reason:r.reason??null,incoming_snapshot:t,difference:differences(ex.data[0],t)});
+            skipped.push({client_id:client,reason:r.decision});continue;
+          }
+          if(r.decision!=="add_separate"||!String(r.reason??"").trim()){conflicts.push({client_id:client,type:"exact",message:"add_separate requires a reason"});continue}
+          duplicateOf=ex.data[0].id;overrideReason=String(r.reason).trim();fingerprint=await sha256(base+"|override|"+overrideReason+"|"+crypto.randomUUID());
+          await db.from("duplicate_reviews").insert({workspace_id:p.workspace_id,existing_transaction_id:duplicateOf,incoming_fingerprint:base,duplicate_type:"exact",decision:"add_separate",reason:overrideReason,incoming_snapshot:t,difference:differences(ex.data[0],t)});
+        } else {
+          const near=await nearMatches(db,p.workspace_id,t);
+          if(near.length){
+            const r:any=resolutions.get(client);
+            if(!r){conflicts.push({client_id:client,type:"near",matches:near.map((x:any)=>({existing:x,difference:differences(x,t)}))});continue}
+            if(["skip","keep_existing","cancel"].includes(r.decision)){
+              await db.from("duplicate_reviews").insert({workspace_id:p.workspace_id,existing_transaction_id:near[0].id,incoming_fingerprint:base,duplicate_type:"near",decision:r.decision==="cancel"?"cancel":"keep_existing",reason:r.reason??null,incoming_snapshot:t,difference:differences(near[0],t)});
+              skipped.push({client_id:client,reason:r.decision});continue;
+            }
+            if(r.decision==="update_existing"){conflicts.push({client_id:client,type:"near",message:"Use request_edit then confirm_pending_operation to update existing.",existing:near[0]});continue}
+            if(r.decision!=="add_separate"||!String(r.reason??"").trim()){conflicts.push({client_id:client,type:"near",message:"add_separate requires a reason"});continue}
+            duplicateOf=near[0].id;overrideReason=String(r.reason).trim();
+            await db.from("duplicate_reviews").insert({workspace_id:p.workspace_id,existing_transaction_id:duplicateOf,incoming_fingerprint:base,duplicate_type:"near",decision:"add_separate",reason:overrideReason,incoming_snapshot:t,difference:differences(near[0],t)});
+          }
+        }
+        const row={workspace_id:p.workspace_id,profile_id:t.profile_id??null,account_id:t.account_id,import_id:t.import_id??null,posted_date:t.posted_date,transaction_date:t.transaction_date??null,amount:t.amount,currency:String(t.currency??"INR").toUpperCase(),direction:t.direction,raw_description:t.raw_description??null,merchant_normalized:t.merchant_normalized??null,transaction_reference:t.transaction_reference??null,category:t.category??null,subcategory:t.subcategory??null,purpose:t.purpose??null,confidence:t.confidence??null,confirmation_status:t.confirmation_status??"confirmed",raw_values:t.raw_values??{},normalized_values:t.normalized_values??{},base_fingerprint:base,fingerprint,duplicate_of_transaction_id:duplicateOf,duplicate_override_reason:overrideReason,duplicate_override_at:overrideReason?new Date().toISOString():null};
+        const {data,error}=await db.from("transactions").insert(row).select().single();if(error){if(String(error.code)==="23505"){conflicts.push({client_id:client,type:"exact_database_constraint"});continue}throw error}
+        inserted.push(data);
+        await db.from("audit_log").insert({workspace_id:p.workspace_id,action:overrideReason?"create_transaction_duplicate_override":"create_transaction",target_table:"transactions",target_id:data.id,after_snapshot:data,reason:overrideReason});
+        await db.from("data_freshness").upsert({workspace_id:p.workspace_id,account_id:t.account_id,confirmed_through:t.posted_date,last_import_at:new Date().toISOString()},{onConflict:"workspace_id,account_id"});
+      }
+      return respond({inserted,skipped,conflicts},conflicts.length?409:200);
+    }
+    if(op==="search_transactions"){
+      reqFields(p,["workspace_id"]);let q=db.from("transactions").select("*").eq("workspace_id",p.workspace_id).is("deleted_at",null).order("posted_date",{ascending:false}).limit(Math.min(Number(p.limit??100),500));
+      if(p.account_id)q=q.eq("account_id",p.account_id);if(p.profile_id)q=q.eq("profile_id",p.profile_id);if(p.from_date)q=q.gte("posted_date",p.from_date);if(p.to_date)q=q.lte("posted_date",p.to_date);if(p.category)q=q.eq("category",p.category);
+      const {data,error}=await q;if(error)throw error;return respond({transactions:data??[]});
+    }
+    if(op==="request_edit"){
+      reqFields(p,["workspace_id","table","record_id","patch"]);if(!editable.has(String(p.table)))throw new Error("Table not editable through FinanceCanvas API");
+      let q=db.from(String(p.table)).select("*").eq("id",p.record_id);q=p.table==="workspaces"?q.eq("id",p.workspace_id):q.eq("workspace_id",p.workspace_id);
+      const {data:before,error}=await q.single();if(error)throw error;
+      const r=await db.from("pending_operations").insert({workspace_id:p.workspace_id,operation_type:"edit_record",target_table:p.table,target_id:p.record_id,requested_change:p.patch,before_snapshot:before,reason:p.reason??null}).select().single();if(r.error)throw r.error;
+      return respond({pending_operation:r.data,before,proposed:{...before,...p.patch},confirmation_required:true});
+    }
+    if(op==="request_delete"){
+      reqFields(p,["workspace_id","table","record_id","delete_type"]);if(!deletable.has(String(p.table)))throw new Error("Table not deletable through FinanceCanvas API");if(!["soft","permanent"].includes(p.delete_type))throw new Error("delete_type must be soft or permanent");
+      const r=await db.from(String(p.table)).select("*").eq("workspace_id",p.workspace_id).eq("id",p.record_id).single();if(r.error)throw r.error;
+      const typ=p.delete_type==="permanent"?"permanent_delete_record":"soft_delete_record";
+      const x=await db.from("pending_operations").insert({workspace_id:p.workspace_id,operation_type:typ,target_table:p.table,target_id:p.record_id,before_snapshot:r.data,reason:p.reason??null}).select().single();if(x.error)throw x.error;
+      return respond({pending_operation:x.data,before:r.data,confirmation_required:true});
+    }
+    if(op==="confirm_pending_operation"){
+      reqFields(p,["workspace_id","operation_id","confirmed"]);const r=await db.from("pending_operations").select("*").eq("workspace_id",p.workspace_id).eq("id",p.operation_id).single();if(r.error)throw r.error;const o=r.data;
+      if(o.status!=="pending")return respond({error:"Operation is "+o.status},409);
+      if(new Date(o.expires_at).getTime()<Date.now()){await db.from("pending_operations").update({status:"expired"}).eq("id",o.id);return respond({error:"Pending operation expired"},409)}
+      if(p.confirmed!==true){await db.from("pending_operations").update({status:"cancelled"}).eq("id",o.id);return respond({cancelled:true})}
+      if(!editable.has(o.target_table)&&!deletable.has(o.target_table))throw new Error("Non-whitelisted target table");
+      if(o.operation_type==="edit_record"){
+        let q=db.from(o.target_table).update(o.requested_change).eq("id",o.target_id);if(o.target_table!=="workspaces")q=q.eq("workspace_id",p.workspace_id);
+        const u=await q.select().single();if(u.error)throw u.error;
+        await db.from("audit_log").insert({workspace_id:p.workspace_id,action:"edit_"+o.target_table,target_table:o.target_table,target_id:o.target_id,before_snapshot:o.before_snapshot,after_snapshot:u.data,reason:o.reason});
+        await db.from("pending_operations").update({status:"applied",applied_at:new Date().toISOString()}).eq("id",o.id);return respond({applied:true,record:u.data});
+      }
+      if(o.operation_type==="soft_delete_record"){
+        const patch=o.target_table==="watch_rules"?{enabled:false}:{deleted_at:new Date().toISOString()};
+        const u=await db.from(o.target_table).update(patch).eq("id",o.target_id).eq("workspace_id",p.workspace_id).select().single();if(u.error)throw u.error;
+        await db.from("audit_log").insert({workspace_id:p.workspace_id,action:"soft_delete_"+o.target_table,target_table:o.target_table,target_id:o.target_id,before_snapshot:o.before_snapshot,after_snapshot:u.data,reason:o.reason});
+        await db.from("pending_operations").update({status:"applied",applied_at:new Date().toISOString()}).eq("id",o.id);return respond({applied:true,record:u.data});
+      }
+      if(o.operation_type==="permanent_delete_record"){
+        const d=await db.from(o.target_table).delete().eq("id",o.target_id).eq("workspace_id",p.workspace_id);if(d.error)throw d.error;
+        await db.from("audit_log").insert({workspace_id:p.workspace_id,action:"permanent_delete_"+o.target_table,target_table:o.target_table,target_id:o.target_id,before_snapshot:o.before_snapshot,reason:o.reason});
+        await db.from("pending_operations").update({status:"applied",applied_at:new Date().toISOString()}).eq("id",o.id);return respond({applied:true});
+      }
+    }
+    if(op==="get_financial_summary"){
+      reqFields(p,["workspace_id"]);const ws=p.workspace_id;
+      const [a,l,ac,t]=await Promise.all([db.from("assets").select("value,currency").eq("workspace_id",ws).is("deleted_at",null),db.from("liabilities").select("outstanding_amount,currency").eq("workspace_id",ws).is("deleted_at",null),db.from("accounts").select("current_balance,currency,balance_as_of").eq("workspace_id",ws).is("deleted_at",null),db.from("transactions").select("amount,direction,category,posted_date,currency").eq("workspace_id",ws).is("deleted_at",null)]);
+      for(const r of [a,l,ac,t])if(r.error)throw r.error;return respond({assets:a.data??[],liabilities:l.data??[],accounts:ac.data??[],transactions:t.data??[],note:"Calculate totals deterministically and do not combine currencies without an explicit FX source."});
+    }
+    if(op==="create_watch_rule"){
+      reqFields(p,["workspace_id","name","rule_type"]);const row={workspace_id:p.workspace_id,profile_id:p.profile_id??null,name:p.name,rule_type:p.rule_type,cadence:p.cadence??null,severity:p.severity??"notice",configuration:p.configuration??{},enabled:p.enabled??true};
+      const r=await db.from("watch_rules").insert(row).select().single();if(r.error)throw r.error;await db.from("audit_log").insert({workspace_id:p.workspace_id,action:"create_watch_rule",target_table:"watch_rules",target_id:r.data.id,after_snapshot:r.data});return respond({watch_rule:r.data});
+    }
+    if(op==="list_watch_rules"){
+      reqFields(p,["workspace_id"]);const r=await db.from("watch_rules").select("*").eq("workspace_id",p.workspace_id).order("created_at",{ascending:false});if(r.error)throw r.error;return respond({watch_rules:r.data??[]});
+    }
+    if(op==="run_watch_checks"){
+      reqFields(p,["workspace_id"]);const ws=p.workspace_id, days=Math.max(1,Math.min(Number(p.lookback_days??35),365)), d=new Date();d.setUTCDate(d.getUTCDate()-days);const since=d.toISOString().slice(0,10);
+      const [rr,tr,fr]=await Promise.all([db.from("watch_rules").select("*").eq("workspace_id",ws).eq("enabled",true),db.from("transactions").select("*").eq("workspace_id",ws).is("deleted_at",null).gte("posted_date",since).order("posted_date",{ascending:false}).limit(5000),db.from("data_freshness").select("*,accounts(name,account_type)").eq("workspace_id",ws)]);
+      for(const r of [rr,tr,fr])if(r.error)throw r.error;const tx=tr.data??[], findings:any[]=[];
+      const add=async(f:any)=>findings.push({...f,workspace_id:ws,finding_fingerprint:await sha256(JSON.stringify([ws,f.watch_rule_id??null,f.finding_type,f.transaction_id??null,f.evidence??{}]))});
+      for(const rule of rr.data??[]){
+        const cfg=rule.configuration??{};
+        if(rule.rule_type==="fee_watch"){const re=/(annual fee|joining fee|late fee|interest|finance charge|forex|markup|surcharge|cash advance|over.?limit|processing fee|convenience fee|gst.*fee)/i;for(const t of tx){const text=[t.category,t.subcategory,t.raw_description,t.merchant_normalized].join(" ");if(re.test(text))await add({watch_rule_id:rule.id,profile_id:t.profile_id,transaction_id:t.id,finding_type:"possible_fee",severity:rule.severity??"warning",title:"Possible fee/charge: "+t.amount+" "+t.currency,explanation:"This transaction contains wording commonly associated with a fee, interest, markup, or surcharge. Verify whether it was expected and correctly applied.",next_steps:["Verify the underlying transaction and account/card terms.","If unexpected, contact the issuer and request the charge basis or reversal eligibility."],evidence:{posted_date:t.posted_date,raw_description:t.raw_description,amount:t.amount,currency:t.currency}})}}
+        if(["fraud_watch","high_value"].includes(rule.rule_type)){const th=Number(cfg.threshold_amount??0);if(th>0)for(const t of tx)if(t.direction==="debit"&&Number(t.amount)>=th)await add({watch_rule_id:rule.id,profile_id:t.profile_id,transaction_id:t.id,finding_type:"high_value_transaction",severity:rule.severity??"warning",title:"High-value debit: "+t.amount+" "+t.currency,explanation:"This debit met the configured threshold. It is an anomaly signal, not proof of fraud.",next_steps:["Confirm the merchant/recipient and amount.","If unrecognized, contact the financial institution promptly."],evidence:{threshold:th,posted_date:t.posted_date,merchant:t.merchant_normalized??t.raw_description,amount:t.amount,currency:t.currency}})}
+        if(rule.rule_type==="duplicate_charge"){const groups=new Map<string,any[]>();for(const t of tx.filter((x:any)=>x.direction==="debit")){const k=[t.account_id,Number(t.amount).toFixed(2),t.currency,norm(t.merchant_normalized??t.raw_description)].join("|");groups.set(k,[...(groups.get(k)??[]),t])}for(const rows of groups.values()){rows.sort((a,b)=>String(a.posted_date).localeCompare(String(b.posted_date)));for(let i=1;i<rows.length;i++){const gap=Math.abs(new Date(rows[i].posted_date).getTime()-new Date(rows[i-1].posted_date).getTime());if(gap<=172800000){const t=rows[i];await add({watch_rule_id:rule.id,profile_id:t.profile_id,transaction_id:t.id,finding_type:"possible_duplicate_charge",severity:rule.severity??"warning",title:"Possible duplicate charge: "+t.amount+" "+t.currency,explanation:"Two very similar debits occurred close together; they may still be legitimate separate purchases.",next_steps:["Compare both transactions and receipts/order history.","If one is unrecognized, contact the issuer/merchant promptly."],evidence:{transaction_ids:[rows[i-1].id,t.id],dates:[rows[i-1].posted_date,t.posted_date],amount:t.amount}})}}}}
+      }
+      for(const f of fr.data??[]){if(!f.confirmed_through||!f.expected_frequency_days)continue;const age=Math.floor((Date.now()-new Date(f.confirmed_through+"T00:00:00Z").getTime())/86400000);if(age>Number(f.expected_frequency_days))await add({watch_rule_id:null,transaction_id:null,finding_type:"stale_data",severity:"notice",title:"Financial data may be stale: "+(f.accounts?.name??"account"),explanation:"Confirmed data is "+age+" days old, beyond the configured freshness interval.",next_steps:["Import newer account data before relying on complete-period analysis."],evidence:{account_id:f.account_id,confirmed_through:f.confirmed_through,age_days:age}})}
+      let created=0;for(const f of findings){const r=await db.from("watch_findings").insert(f);if(!r.error)created++;else if(String(r.error.code)!=="23505")throw r.error}
+      await db.from("watch_rules").update({last_run_at:new Date().toISOString()}).eq("workspace_id",ws).eq("enabled",true);
+      return respond({evaluated_transactions:tx.length,findings_generated:findings.length,new_findings_created:created,findings});
+    }
+    if(op==="list_watch_findings"){
+      reqFields(p,["workspace_id"]);let q=db.from("watch_findings").select("*").eq("workspace_id",p.workspace_id).order("created_at",{ascending:false}).limit(Math.min(Number(p.limit??100),500));if(p.status)q=q.eq("status",p.status);if(p.severity)q=q.eq("severity",p.severity);const r=await q;if(r.error)throw r.error;return respond({findings:r.data??[]});
+    }
+    if(op==="export_workspace_json"){
+      reqFields(p,["workspace_id"]);const tables=["workspaces","profiles","institutions","accounts","imports","transactions","transaction_splits","merchant_aliases","loans","loan_payments","insurance_policies","assets","liabilities","investments","investment_transactions","subscriptions","goals","correction_memory","duplicate_reviews","audit_log","watch_rules","watch_findings","data_freshness"], out:Record<string,any>={};
+      for(const table of tables){let q=db.from(table).select("*");q=table==="workspaces"?q.eq("id",p.workspace_id):q.eq("workspace_id",p.workspace_id);const r=await q;if(r.error)throw r.error;out[table]=r.data??[]}
+      return respond({schema_version:"0.1.0",exported_at:new Date().toISOString(),workspace_id:p.workspace_id,data:out});
+    }
+    return respond({error:"Unknown operation: "+op},404);
+  } catch(e){
+    const status=Number((e as any)?.status??400);return respond({error:(e as Error).message??String(e)},status>=400&&status<600?status:400);
+  }
+});
