@@ -61,7 +61,7 @@ FinanceCanvas also minimizes high-risk identifiers. v0.1 does not intentionally 
 
 ## Connector-first access
 
-If the host application/LLM already has an explicitly authorized Supabase connection, FinanceCanvas should use that connection directly for approved maintenance/data operations.
+If the owner/developer already has an explicitly authorized Supabase connection, FinanceCanvas may use it for maintenance without duplicating credentials. Normal end-user/LLM runtime access should remain behind the restricted FinanceCanvas API (or an equivalently least-privilege connector), because a project-admin connector can bypass application safeguards.
 
 In that mode:
 - do not ask the user to paste Supabase credentials;
