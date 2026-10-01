@@ -5,10 +5,10 @@ const cors = {
   "access-control-allow-headers": "authorization, content-type",
   "access-control-allow-methods": "POST, OPTIONS",
 };
-const editable = new Set(["workspaces","profiles","institutions","accounts","transactions","merchant_aliases","loans","insurance_policies","assets","liabilities","investments","subscriptions","goals","watch_rules","data_freshness","households","household_members","profile_relationships","asset_owners","liability_owners","loan_borrowers","account_balances","credit_card_statements","budgets","recurring_items","financial_snapshots","imports","extracted_fields","confirmation_queue"]);
-const deletable = new Set(["profiles","institutions","accounts","transactions","merchant_aliases","loans","insurance_policies","assets","liabilities","investments","subscriptions","goals","watch_rules","households","household_members","profile_relationships","asset_owners","liability_owners","loan_borrowers","account_balances","credit_card_statements","budgets","recurring_items","financial_snapshots","imports","extracted_fields","confirmation_queue"]);
-const genericCreate = new Set(["institutions","account_owners","transaction_splits","merchant_aliases","loans","loan_payments","insurance_policies","assets","liabilities","investments","investment_transactions","subscriptions","goals","correction_memory","data_freshness","processing_consents","sensitive_data_events","privacy_requests","breach_incidents","households","household_members","profile_relationships","asset_owners","liability_owners","loan_borrowers","account_balances","credit_card_statements","budgets","recurring_items","financial_snapshots","imports","extracted_fields","confirmation_queue"]);
-const genericList = new Set(["institutions","account_owners","transaction_splits","merchant_aliases","loans","loan_payments","insurance_policies","assets","liabilities","investments","investment_transactions","subscriptions","goals","correction_memory","duplicate_reviews","audit_log","watch_rules","watch_findings","data_freshness","processing_consents","sensitive_data_events","privacy_requests","breach_incidents","security_events","households","household_members","profile_relationships","asset_owners","liability_owners","loan_borrowers","account_balances","credit_card_statements","budgets","recurring_items","financial_snapshots","imports","extracted_fields","confirmation_queue"]);
+const editable = new Set(["workspaces","profiles","institutions","accounts","transactions","merchant_aliases","loans","insurance_policies","assets","liabilities","investments","subscriptions","goals","watch_rules","data_freshness","households","household_members","profile_relationships","asset_owners","liability_owners","loan_borrowers","account_balances","credit_card_statements","budgets","recurring_items","financial_snapshots","imports","extracted_fields","confirmation_queue","income_sources"]);
+const deletable = new Set(["profiles","institutions","accounts","transactions","merchant_aliases","loans","insurance_policies","assets","liabilities","investments","subscriptions","goals","watch_rules","households","household_members","profile_relationships","asset_owners","liability_owners","loan_borrowers","account_balances","credit_card_statements","budgets","recurring_items","financial_snapshots","imports","extracted_fields","confirmation_queue","insurance_premiums"]);
+const genericCreate = new Set(["institutions","account_owners","transaction_splits","merchant_aliases","loans","loan_payments","insurance_policies","assets","liabilities","investments","investment_transactions","subscriptions","goals","correction_memory","data_freshness","processing_consents","sensitive_data_events","privacy_requests","breach_incidents","households","household_members","profile_relationships","asset_owners","liability_owners","loan_borrowers","account_balances","credit_card_statements","budgets","recurring_items","financial_snapshots","imports","extracted_fields","confirmation_queue","financial_preferences"]);
+const genericList = new Set(["institutions","account_owners","transaction_splits","merchant_aliases","loans","loan_payments","insurance_policies","assets","liabilities","investments","investment_transactions","subscriptions","goals","correction_memory","duplicate_reviews","audit_log","watch_rules","watch_findings","data_freshness","processing_consents","sensitive_data_events","privacy_requests","breach_incidents","security_events","households","household_members","profile_relationships","asset_owners","liability_owners","loan_borrowers","account_balances","credit_card_statements","budgets","recurring_items","financial_snapshots","imports","extracted_fields","confirmation_queue","recommendations"]);
 
 function respond(body: unknown, status=200) {
   return new Response(JSON.stringify(body), {status, headers:{...cors,"content-type":"application/json; charset=utf-8"}});
@@ -153,6 +153,22 @@ async function validateGenericRefs(db:any,table:string,row:any,ws:string){
   if(table==="recurring_items"){await one("profiles",row.profile_id);await one("accounts",row.account_id);}
   if(table==="imports"){await one("profiles",row.profile_id);await one("accounts",row.account_id);}
   if(["extracted_fields","confirmation_queue"].includes(table))await one("imports",row.import_id);
+  if(table==="income_sources"){await one("profiles",row.profile_id);await one("accounts",row.account_id);}
+  if(table==="insurance_premiums"){await one("insurance_policies",row.policy_id);await one("transactions",row.transaction_id);}
+  if(["financial_preferences","recommendations"].includes(table))await one("profiles",row.profile_id);
+  if(table==="investment_allocation_targets"){await one("profiles",row.profile_id);await one("investments",row.investment_id);}
+}
+function median(nums:number[]){
+  if(!nums.length)return 0;
+  const a=[...nums].sort((x,y)=>x-y), m=Math.floor(a.length/2);
+  return a.length%2?a[m]:(a[m-1]+a[m])/2;
+}
+function daysBetween(a:string,b:string){
+  return Math.round((new Date(b+"T00:00:00Z").getTime()-new Date(a+"T00:00:00Z").getTime())/86400000);
+}
+function txnDelta(accountType:string,direction:string,amount:number){
+  if(accountType==="credit_card") return direction==="debit"?amount:direction==="credit"?-amount:0;
+  return direction==="credit"?amount:direction==="debit"?-amount:0;
 }
 async function nearMatches(db:any, ws:string, t:Record<string,any>) {
   const d=new Date(t.posted_date+"T00:00:00Z"), lo=new Date(d), hi=new Date(d);
@@ -229,7 +245,7 @@ Deno.serve(async(req:Request)=>{
       reqFields(p,["workspace_id","name","account_type"]);
       if(p.identifier_last4 && !/^\d{1,4}$/.test(String(p.identifier_last4))) throw new Error("identifier_last4 must contain at most the final 4 digits");
       await assertIdsInWorkspace(db,"institutions",[p.institution_id],p.workspace_id);
-      const row={workspace_id:p.workspace_id,institution_id:p.institution_id??null,name:p.name,account_type:p.account_type,currency:String(p.currency??"INR").toUpperCase(),identifier_last4:p.identifier_last4??null,current_balance:p.current_balance??null,balance_as_of:p.balance_as_of??null,credit_limit:p.credit_limit??null,annual_fee:p.annual_fee??null,annual_fee_waiver_spend:p.annual_fee_waiver_spend??null,metadata:sanitizeValue(p.metadata??{})};
+      const row={workspace_id:p.workspace_id,institution_id:p.institution_id??null,name:p.name,account_type:p.account_type,currency:String(p.currency??"INR").toUpperCase(),identifier_last4:p.identifier_last4??null,current_balance:p.current_balance??null,balance_as_of:p.balance_as_of??null,credit_limit:p.credit_limit??null,annual_fee:p.annual_fee??null,annual_fee_waiver_spend:p.annual_fee_waiver_spend??null,annual_fee_next_date:p.annual_fee_next_date??null,metadata:sanitizeValue(p.metadata??{})};
       const {data,error}=await db.from("accounts").insert(row).select().single();if(error)throw error;
       await db.from("audit_log").insert({workspace_id:p.workspace_id,action:"create_account",target_table:"accounts",target_id:data.id,after_snapshot:auditSafe(data)});
       return respond({account:data});
@@ -356,6 +372,8 @@ Deno.serve(async(req:Request)=>{
           purpose:t.purpose??null,
           confidence:t.confidence??null,
           confirmation_status:t.confirmation_status??"confirmed",
+          balance_after:t.balance_after??null,
+          source_sequence:t.source_sequence??null,
           raw_values:t.raw_values??{},
           normalized_values:t.normalized_values??{},
           base_fingerprint:base,
