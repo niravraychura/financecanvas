@@ -1,0 +1,23 @@
+cff-version: 1.2.0
+message: "If you use FinanceCanvas, please cite this repository."
+title: "FinanceCanvas"
+type: software
+authors:
+  - family-names: "Raychura"
+    given-names: "Nirav"
+version: "0.1.0"
+date-released: "2026-10-01"
+repository-code: "https://github.com/niravraychura/financecanvas"
+url: "https://github.com/niravraychura/financecanvas"
+license: "Apache-2.0"
+keywords:
+  - personal finance
+  - AI agent
+  - agent skills
+  - personal CFO
+  - financial analysis
+  - Supabase
+  - ChatGPT
+  - Claude Code
+  - Cursor
+  - Codex
