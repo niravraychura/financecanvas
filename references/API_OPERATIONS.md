@@ -123,3 +123,55 @@ The connector commit routine requires explicit final confirmation, rechecks exac
 Ordinary private financial fields are importable. Critical secrets and full high-risk identifiers remain prohibited/minimized.
 
 See `CONNECTOR_MODE.md` for safe Base64 transport of untrusted JSON when the connector only accepts SQL strings.
+
+
+## Connector-native entity, salary and tax imports
+
+Authorized Supabase connector mode supports these private routines without requiring the Edge Function operations to be exposed as tools.
+
+### Structured financial documents
+
+- `financecanvas_private.preview_financial_document(workspace_id, profile_id, source_hash, document_type, records)`
+- `financecanvas_private.commit_financial_document(workspace_id, profile_id, source_hash, document_type, original_filename, records, resolutions, final_confirmation)`
+
+Supported primary entity types:
+
+- `insurance_policy`
+- `loan`
+- `investment`
+- `income_source`
+- `asset`
+- `liability`
+- `subscription`
+- `goal`
+- `recurring_item`
+
+Supported child event types:
+
+- `insurance_premium`
+- `loan_payment`
+- `investment_transaction`
+
+### Salary/pay slips
+
+- `financecanvas_private.preview_salary_document(...)`
+- `financecanvas_private.commit_salary_document(...)`
+
+These preserve a long-lived `income_source` and dated `income_payment` history.
+
+### Tax summaries/returns
+
+- `financecanvas_private.preview_tax_document(...)`
+- `financecanvas_private.commit_tax_document(...)`
+
+Tax imports persist minimized financial totals/status only. PAN/Aadhaar/passport/tax identifiers are prohibited.
+
+### Import evidence links
+
+`public.import_entities` links a structured import to the created/updated/reused entity records without storing source bytes.
+
+### Security
+
+All connector-native import functions live under `financecanvas_private` and are revoked from `anon` and `authenticated`.
+
+They require final confirmation before write operations and enforce source-hash/identifier privacy constraints at the database layer.
