@@ -92,3 +92,15 @@ Record one result in the PR/release notes:
 
 For trivial prose-only changes, CI plus a quick checklist review may be sufficient.  
 For Skill behavior, database, API, authentication, import, alert, privacy, or financial-decision changes, perform the full relevant checklist and Supabase verification.
+
+
+## Non-transaction connector imports
+- [ ] `financecanvas_private.preview_financial_document` and `commit_financial_document` remain private/revoked from anon/authenticated.
+- [ ] Salary/pay-slip connector functions remain private and preserve pay-period history without source-file storage.
+- [ ] Tax connector functions remain private and do not persist PAN/Aadhaar/passport/tax identifiers.
+- [ ] `import_entities` and `income_payments` have RLS enabled and no direct anon/authenticated DML.
+- [ ] Structured-document updates require changed-existing preview, explicit decision/reason and final confirmation.
+- [ ] Duplicate child events are not silently inserted.
+- [ ] Source hashes are either null or lowercase 64-character SHA-256 hex.
+- [ ] Fields named `identifier_last4` / `policy_identifier_last4` cannot exceed four characters.
+- [ ] Child financial records cannot reference a parent/transaction/import from another workspace.
