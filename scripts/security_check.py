@@ -28,6 +28,7 @@ REQUIRED_FILES = {
     "AGENTS.md",
     "ROADMAP.md",
     "package.json",
+    "skills.sh.json",
     "bin/install.mjs",
     "LICENSE",
     "NOTICE",
@@ -171,6 +172,10 @@ def main() -> int:
         errors.append("README.md and INSTALL.md must contain the canonical one-command installer")
     if "Apache License" not in license_text or "Version 2.0" not in license_text:
         errors.append("LICENSE must contain Apache License 2.0")
+    skills_manifest = text_of(ROOT / "skills.sh.json")
+    if '"financecanvas"' not in skills_manifest or 'skills.sh.schema.json' not in skills_manifest:
+        errors.append("skills.sh manifest must reference the financecanvas skill and published schema")
+
     package_json = text_of(ROOT / "package.json")
     if '"license": "Apache-2.0"' not in package_json:
         errors.append("package.json must declare Apache-2.0")
