@@ -1,6 +1,6 @@
 # FinanceCanvas BYO Supabase Connector Mode
 
-FinanceCanvas is **not** tied to one shared Supabase project.
+FinanceCanvas uses a **bring-your-own-Supabase (BYO Supabase)** model and is **not** tied to one shared Supabase project.
 
 Each user may connect their own Supabase account/project through the AI host's authorized Supabase connector. Financial data stays in the project that user selected.
 
