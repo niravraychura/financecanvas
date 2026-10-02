@@ -25,7 +25,7 @@ jobs:
           HOME: ${{ runner.temp }}/financecanvas-home
         run: |
           mkdir -p "$HOME/.claude/skills" "$HOME/.cursor/skills" "$HOME/.codex/skills"
-          npx -y skills add . --all -g -y
+          npx -y skills add niravraychura/financecanvas --all -g -y
           echo "Installed skill manifests:"
           find "$HOME" -type f -name SKILL.md -print
           test -f "$HOME/.claude/skills/financecanvas/SKILL.md"
