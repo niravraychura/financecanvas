@@ -3,7 +3,7 @@
 ## Install
 
 ```bash
-npx skills add niravraychura/financecanvas --all -g
+npx --yes github:niravraychura/financecanvas
 ```
 
 ## Start
