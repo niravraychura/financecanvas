@@ -1,0 +1,11 @@
+{
+  "$schema": "https://skills.sh/schemas/skills.sh.schema.json",
+  "notGrouped": "bottom",
+  "groupings": [
+    {
+      "title": "Personal Finance",
+      "description": "Personal CFO, financial history, statements, budgeting, cards, loans, insurance, investments, subscriptions and financial monitoring.",
+      "skills": ["financecanvas"]
+    }
+  ]
+}
