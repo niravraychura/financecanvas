@@ -30,3 +30,12 @@ Do not promise deletion of independent copies held by the host LLM/chat provider
 ## Legal/security holds
 
 For a future commercial deployment, do not permanently erase records that are subject to a valid legal/regulatory/security retention obligation. This must be implemented before production use if such obligations apply.
+
+
+## Structured financial document records
+
+Structured records such as `import_entities`, `income_payments` and minimized `tax_records` may be retained as part of the user's FinanceCanvas history until edited/erased according to the normal workspace controls.
+
+They contain structured facts/evidence links only and must not be used to retain reconstructable source-document contents.
+
+Source PDFs/images/spreadsheets remain temporary inputs and are not intentionally persisted in FinanceCanvas storage.
