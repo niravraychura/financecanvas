@@ -61,3 +61,14 @@ Before production launch, replace this section with the operator's:
 - address/contact method where required;
 - escalation/complaint instructions;
 - regulator/Board complaint information where applicable.
+
+
+## Tax and salary documents
+
+FinanceCanvas may persist minimized structured salary/pay-period and tax-summary facts when the user imports those documents.
+
+For salary/pay slips, allowed structured fields can include pay period, payment date, gross/net amount, taxes withheld and deductions.
+
+For tax documents, FinanceCanvas stores only finance-relevant summary values. PAN, Aadhaar/VID, passport/tax identifiers and authentication secrets are excluded from persistent tax records.
+
+The original salary/tax document is not intentionally stored by FinanceCanvas. The chat/AI host may independently retain the uploaded file under its own policies.
