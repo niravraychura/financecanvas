@@ -268,3 +268,155 @@ User C + FinanceCanvas Skill → User C's Supabase project
 There is no requirement for those users to share the author's Supabase project.
 
 This BYO-Supabase model reduces central data custody, but each user/operator is still responsible for securing their Supabase account/project and for any legal obligations arising from their use.
+
+
+## Non-transaction financial documents
+
+When the host can read a local financial document and has an authorized Supabase connector, do not require the Edge Function/API operations to be exposed.
+
+### Structured entity documents
+
+For insurance, loans, investment/holding statements, assets, liabilities, subscriptions, goals and recurring items:
+
+1. Extract only the allowed structured fields.
+2. Compute the local source SHA-256 when bytes are available.
+3. Call:
+
+```sql
+select financecanvas_private.preview_financial_document(
+  '<workspace uuid>',
+  '<profile uuid>',
+  '<sha256 or null>',
+  '<document type>',
+  <records jsonb>
+);
+```
+
+Each record uses:
+
+```json
+{
+  "client_id": "record-1",
+  "entity_type": "insurance_policy | loan | investment | income_source | asset | liability | subscription | goal | recurring_item",
+  "data": {},
+  "children": []
+}
+```
+
+Supported child events:
+
+- `insurance_premium`
+- `loan_payment`
+- `investment_transaction`
+
+If preview returns `changed_existing`, show the field-level differences and ask:
+
+**Keep existing / Update existing / Add as separate**
+
+`update_existing` and `add_separate` require a reason.
+
+For an exact duplicate child event, ask:
+
+**Skip / Add as separate**
+
+Adding separately requires a reason.
+
+After explicit final confirmation, call:
+
+```sql
+select financecanvas_private.commit_financial_document(
+  '<workspace uuid>',
+  '<profile uuid>',
+  '<sha256 or null>',
+  '<document type>',
+  '<original filename or null>',
+  <records jsonb>,
+  <resolutions jsonb>,
+  true
+);
+```
+
+The commit is atomic for the controlled document write set, records import/entity links and audit history, and stores no source bytes.
+
+### Salary/pay slips
+
+Salary slips preserve both the long-lived income source and dated pay-period history.
+
+Preview:
+
+```sql
+select financecanvas_private.preview_salary_document(
+  '<workspace uuid>',
+  '<profile uuid>',
+  '<sha256 or null>',
+  <income_source jsonb>,
+  <payment jsonb>
+);
+```
+
+Commit after final confirmation:
+
+```sql
+select financecanvas_private.commit_salary_document(
+  '<workspace uuid>',
+  '<profile uuid>',
+  '<sha256 or null>',
+  '<filename or null>',
+  <income_source jsonb>,
+  <payment jsonb>,
+  <resolutions jsonb>,
+  true
+);
+```
+
+The pay-period record is stored in `income_payments`; source payslip bytes are not stored.
+
+### Tax documents
+
+Tax imports are intentionally minimized. Persist financial totals/status only; never persist PAN, Aadhaar/VID, passport/tax identifiers, passwords, OTPs, or similar credentials.
+
+Preview:
+
+```sql
+select financecanvas_private.preview_tax_document(
+  '<workspace uuid>',
+  '<profile uuid>',
+  '<sha256 or null>',
+  <tax_record jsonb>
+);
+```
+
+Commit after final confirmation:
+
+```sql
+select financecanvas_private.commit_tax_document(
+  '<workspace uuid>',
+  '<profile uuid>',
+  '<sha256 or null>',
+  '<filename or null>',
+  <tax_record jsonb>,
+  '<decision or null>',
+  '<reason or null>',
+  true
+);
+```
+
+Changed existing tax records require the same explicit **Keep / Update / Add separate** decision, with a reason for Update/Add.
+
+### Document routing summary
+
+```text
+Bank/card/wallet/brokerage transaction statement
+  -> preview_statement_import / commit_statement_import
+
+Insurance/loan/investment/asset/liability/subscription/goal document
+  -> preview_financial_document / commit_financial_document
+
+Salary/pay slip
+  -> preview_salary_document / commit_salary_document
+
+Tax summary/return
+  -> preview_tax_document / commit_tax_document
+```
+
+If one document contains both entity data and transaction rows, route each portion through its appropriate controlled importer rather than bypassing duplicate/confirmation rules.
