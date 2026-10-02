@@ -10,12 +10,15 @@ Do not intentionally persist the source file in FinanceCanvas.
 
 ## Sensitive-data pass
 
-Before persistence:
-1. classify sensitive content;
-2. reject critical authentication/payment secrets;
-3. mask/minimize blocked identifiers;
-4. show the user a warning and appropriate next steps;
-5. store only allowed structured data.
+Use three classes:
+
+1. **Critical secrets** — CVV/CVC, PIN, OTP, passwords/passcodes, recovery phrases, private keys and access/API tokens. Reject these from persistence and warn immediately.
+2. **Restricted identifiers** — full card/account numbers, Aadhaar/VID, PAN, passport/tax identifiers. Mask/minimize them; normally retain only masked values/last four where needed.
+3. **Private operational financial data** — profile name, already-masked card/account identifiers, transactions, merchants, amounts, categories, balances, credit limits, due dates, statement totals and reward data. These are normally allowed because they are required for FinanceCanvas to do its job.
+
+Mailing/email/contact data is ordinary personal data, not an authentication secret. Exclude it by default when it is not needed for a finance feature, but do not treat its mere presence as a reason to block the import.
+
+A normal financial statement should receive a concise privacy notice, not a refusal. Continue to preview/final confirmation after excluding any prohibited fields.
 
 ## Ownership
 
@@ -35,7 +38,11 @@ Ask only about material uncertainties.
 4. show differences
 5. user decision/reason where required
 6. final import confirmation
-7. commit
+7. atomic commit
+
+In API mode use `preview_transaction_import` / `commit_transactions`.
+
+In BYO Supabase connector mode use `financecanvas_private.preview_statement_import` / `financecanvas_private.commit_statement_import`. The connector commit routine must recheck duplicates at commit time.
 
 Never silently overwrite an existing record.
 
