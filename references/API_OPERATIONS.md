@@ -106,3 +106,20 @@ select financecanvas_private.initialize_workspace(
 These routines operate in the user-selected Supabase project and are not granted to `anon` or `authenticated`.
 
 Never hardcode the repository author's Supabase project reference/URL.
+
+
+## Connector-native statement import
+
+When an authorized Supabase connector is available, the HTTP import operations do not need to be exposed as tools.
+
+Use the private connector routines:
+
+- `financecanvas_private.ensure_account(...)`
+- `financecanvas_private.preview_statement_import(...)`
+- `financecanvas_private.commit_statement_import(...)`
+
+The connector commit routine requires explicit final confirmation, rechecks exact/near duplicates, writes duplicate-review decisions, commits transactions atomically through the FinanceCanvas batch RPC, creates structured import/credit-card statement metadata, and never stores source document bytes.
+
+Ordinary private financial fields are importable. Critical secrets and full high-risk identifiers remain prohibited/minimized.
+
+See `CONNECTOR_MODE.md` for safe Base64 transport of untrusted JSON when the connector only accepts SQL strings.
