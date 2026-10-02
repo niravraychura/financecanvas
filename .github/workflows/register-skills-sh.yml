@@ -25,5 +25,13 @@ jobs:
         run: |
           mkdir -p "$HOME/.codex/skills"
           npx -y skills add https://github.com/niravraychura/financecanvas --skill financecanvas -g -a codex --copy -y
-          test -f "$HOME/.codex/skills/financecanvas/SKILL.md"
+          if test -f "$HOME/.codex/skills/financecanvas/SKILL.md"; then
+            echo "FinanceCanvas installed in the Codex skill directory."
+          elif test -f "$HOME/.agents/skills/financecanvas/SKILL.md"; then
+            echo "FinanceCanvas installed in the universal Agent Skills directory."
+          else
+            echo "FinanceCanvas was not found in an expected installed-skill directory." >&2
+            find "$HOME" -type f -name SKILL.md -print || true
+            exit 1
+          fi
           echo "FinanceCanvas installed successfully through the official skills CLI with telemetry enabled."
