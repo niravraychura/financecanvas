@@ -28,19 +28,30 @@ Use these repository references when the task needs them:
 - `references/MEMORY_AND_RECOMMENDATIONS.md` — persistent preferences and recommendation history
 - `references/FINANCIAL_HEALTH_RULES.md` — evidence-based health metrics and presentation
 - `references/SCENARIO_RULES.md` — deterministic what-if assumptions, isolation and comparison
+- `references/CONNECTOR_MODE.md` — BYO Supabase discovery, connector bootstrap, project isolation and runtime rules
 
 If a reference conflicts with a stricter rule in this Skill, follow the stricter rule.
 
 ## Connection mode
 
-Use an explicitly authorized Supabase connector for **owner/developer maintenance** when available. Do not duplicate Supabase secrets into a local file merely because the connector exists.
+FinanceCanvas uses a **bring-your-own-Supabase** model. Never assume that a user should connect to the author's Supabase project.
 
+Use one of these modes:
+
+1. **Authorized Supabase connector mode** — preferred for personal/private use when the user's AI host already has an authorized Supabase connector. Discover and use that user's selected project dynamically. Follow `references/CONNECTOR_MODE.md`.
+2. **Restricted FinanceCanvas API mode** — use when an external LLM/app has a configured FinanceCanvas API endpoint/key but no authorized Supabase connector.
+3. **Non-persistent mode** — when neither backend path exists, analyze temporary data but clearly state that persistent financial history is not configured.
+
+Rules:
+
+- Never hardcode a Supabase project reference, URL, organization ID, or the author's Supabase project into Skill behavior.
 - Do **not** ask the user to paste Supabase passwords, server keys, or database credentials into chat.
 - Do **not** copy connector credentials into files, memory, database rows, logs, or source control.
-- For normal FinanceCanvas runtime use by an LLM/user, prefer the controlled FinanceCanvas API or another least-privilege connector exposing only approved operations.
-- Do not treat a general project-admin Supabase connector as the normal end-user data path: direct administrative SQL can bypass application confirmation and duplicate controls.
-- Local configuration, if an external client truly requires it, must contain only the minimum runtime credential and stay outside source control.
+- When multiple Supabase projects are available, ask the user which project should store FinanceCanvas data unless they already selected one.
+- A dedicated Supabase project is preferred, but a shared project may be used only if FinanceCanvas operations remain scoped to FinanceCanvas tables/functions and never touch unrelated application data.
+- Do not create a duplicate local `.env` merely because an authorized connector already provides access.
 - Duplicate review, confirmation, deletion, audit, and sensitive-data rules remain mandatory regardless of access path.
+- In connector mode, narrowly scoped SQL/RPCs documented in `references/CONNECTOR_MODE.md` are allowed. Arbitrary SQL is not.
 
 ## Sensitive-data warning and minimization
 
@@ -89,7 +100,7 @@ Every FinanceCanvas code, schema, Skill, API, dependency, security, privacy, or 
 4. Do not permanently store uploaded source PDFs, images, statements, receipts, bills, CSVs, or spreadsheets in FinanceCanvas.
 5. Never store CVV, PIN, OTP, banking passwords, internet-banking credentials, or full card numbers. Prefer masked identifiers/last four digits.
 6. Never expose Supabase secret/server credentials.
-7. Database writes must use the controlled FinanceCanvas API. Never execute arbitrary SQL from this Skill.
+7. Database writes must use either the controlled FinanceCanvas API or the approved BYO-Supabase connector procedures in `references/CONNECTOR_MODE.md`. Never execute arbitrary/ad-hoc SQL merely because a connector has admin access.
 8. Exact duplicates must never be silently inserted.
 9. Edits, permanent deletions, and duplicate overrides require explicit user confirmation; reasons are required where the API requires them.
 10. Low-confidence or ambiguous facts must be confirmed before becoming trusted financial data.
@@ -106,16 +117,40 @@ Every FinanceCanvas code, schema, Skill, API, dependency, security, privacy, or 
 
 Installation of the Skill itself should be simple. Do not make the user manually clone the repository or copy Skill files when the host already discovered FinanceCanvas.
 
-Before the first database-backed task:
-1. Detect whether an authorized Supabase connector or configured FinanceCanvas API is already available.
-2. If the FinanceCanvas schema/API is already installed, call `initialization_status` and continue.
-3. If persistent mode is requested, an authorized owner/developer Supabase connector is available, and the FinanceCanvas schema is missing, ask one concise confirmation to initialize the FinanceCanvas data layer. After confirmation, use the bundled migrations/functions through the authorized connector; do not ask the user to paste admin credentials or create a duplicate local secret.
-4. If no authorized persistent backend exists, explain that the Skill is installed but persistent storage is not configured. Do not pretend that data will persist. The user may continue with non-persistent analysis or follow `ADVANCED_SETUP.md`.
-5. After any automatic backend installation/change, run the FinanceCanvas security checks required by `SECURITY_CHECKLIST.md`.
+### 1. Detect the persistence path
 
-Call `initialization_status` before the first database-backed task.
+Before the first database-backed task:
+
+- If an authorized Supabase connector exists, use **connector mode** and follow `references/CONNECTOR_MODE.md`.
+- Otherwise, if a configured FinanceCanvas API endpoint/key exists, use **API mode**.
+- Otherwise explain that persistent storage is not configured; do not pretend data will persist.
+
+### 2. Connector mode: discover the user's project
+
+When an authorized Supabase connector exists:
+
+1. List the user's accessible Supabase projects.
+2. If exactly one suitable project exists, use it.
+3. If multiple suitable projects exist and the user has not selected one, ask which project should store FinanceCanvas data.
+4. Never choose or reference the author's Supabase project merely because this Skill came from the author's repository.
+5. Check whether `public.financecanvas_schema` exists in the selected project.
+
+If the schema is missing and the user wants persistent mode, ask one concise confirmation to install FinanceCanvas. After confirmation, apply the bundled migrations in filename order to **that selected user's project** and run the required security checks.
+
+If the schema is already installed, call:
+
+`select financecanvas_private.connector_status();`
+
+Do **not** require the HTTP/API `initialization_status` operation when connector mode is available.
+
+### 3. API mode
+
+When connector mode is unavailable but the FinanceCanvas API is configured, call the controlled `initialization_status` operation.
+
+### 4. Deployment context
 
 Establish the deployment context before first persistent use:
+
 - **Personal/private** — individual or household use.
 - **Organization/commercial/public** — use for customers, clients, employees, professional services, SaaS, public users, or monetized access.
 
@@ -123,13 +158,25 @@ For personal/private use, continue normally.
 
 For organization/commercial/public use, explain that FinanceCanvas is currently marked prototype/not production-ready and do not ingest real customer financial data until the applicable `COMPLIANCE.md` production gate is completed.
 
+### 5. Create the first workspace
+
 If no workspace exists, ask:
 
 > Would you like to set up your FinanceCanvas workspace now?
 
 If yes, collect workspace name, base currency, and first profile name.
 
-If the user declines, call `initialize_workspace` with `use_default=true`. Do not block normal use. The default workspace can be renamed later.
+In **connector mode**, initialize using the private connector routine:
+
+`select financecanvas_private.initialize_workspace('<workspace>','<currency>','<profile>');`
+
+In **API mode**, call `initialize_workspace`.
+
+If `initialize_workspace` is not exposed as an API/tool but an authorized Supabase connector exists, **do not stop** and do not tell the user initialization is blocked. Use the connector-native routine above.
+
+If the user declines in API mode, `initialize_workspace` may use `use_default=true`. In connector mode, do not create a workspace unless the user supplies/accepts the requested initialization details.
+
+After setup, verify the workspace/profile exists and state which user-selected Supabase project is holding the data without exposing credentials.
 
 ## Multiple people
 
