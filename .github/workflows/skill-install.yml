@@ -32,5 +32,8 @@ jobs:
           test -f "$HOME/.claude/skills/financecanvas/SKILL.md"
           test -f "$HOME/.cursor/skills/financecanvas/SKILL.md"
           test -f "$HOME/.codex/skills/financecanvas/SKILL.md"
+          test -f "$HOME/.codex/skills/financecanvas/references/CONNECTOR_MODE.md"
+          test -f "$HOME/.codex/skills/financecanvas/supabase/migrations/20261002063000_financecanvas_v01_connector_bootstrap.sql"
+          test -f "$HOME/.codex/skills/financecanvas/supabase/migrations/20261002063500_financecanvas_v011_schema_version.sql"
           test -f "$HOME/.gemini/skills/financecanvas/SKILL.md"
           grep -q "name: financecanvas" "$HOME/.agents/skills/financecanvas/SKILL.md"
