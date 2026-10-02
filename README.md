@@ -111,6 +111,24 @@ received
 
 Only uncertain/material items should be presented for review before the final import confirmation.
 
+### Supported document imports
+
+Connector-native persistent imports now cover:
+
+- bank and credit-card statements;
+- wallet/brokerage transaction statements;
+- CSV/XLS/XLSX transaction exports;
+- insurance policies and premium history;
+- loan sanction/loan statements and repayments;
+- investment portfolio/holding statements and investment events;
+- salary/pay slips with dated income-payment history;
+- asset and liability documents;
+- subscription/recurring records;
+- tax summaries/returns with identifiers minimized;
+- goal-related structured data.
+
+For changed existing loans, policies, holdings, income sources, assets, liabilities, subscriptions, goals, recurring items or tax summaries, FinanceCanvas shows the field differences and requires an explicit **Keep / Update / Add separate** decision. It never silently overwrites the existing record.
+
 ### Duplicate protection
 
 FinanceCanvas protects against duplicates at multiple levels:
@@ -127,7 +145,7 @@ Confirmed transaction batches are committed **atomically**: either the whole pre
 
 First-class records exist for:
 
-- income sources;
+- income sources and dated income payments;
 - loans and loan payments;
 - insurance and premium history;
 - assets and liabilities;
@@ -136,6 +154,7 @@ First-class records exist for:
 - subscriptions and recurring items;
 - budgets;
 - financial goals;
+- minimized tax records;
 - historical financial snapshots.
 
 ### Financial memory
