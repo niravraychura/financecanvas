@@ -448,7 +448,7 @@ If detected, FinanceCanvas should warn the user, avoid repeating the value, bloc
 
 ### High-risk identifiers
 
-v0.1 minimizes/blocks full:
+FinanceCanvas minimizes/blocks full:
 
 - card numbers;
 - bank-account numbers;
@@ -457,6 +457,22 @@ v0.1 minimizes/blocks full:
 - passport/tax identifiers.
 
 Accounts/cards normally use masked values or last four digits.
+
+### Private financial data — normally importable
+
+FinanceCanvas is designed to persist the structured finance data needed for analysis, including:
+
+- profile/full name;
+- already-masked card/account identifier;
+- transactions, merchants, amounts and categories;
+- statement dates;
+- balances and credit limits;
+- total/minimum due and due dates;
+- rewards and finance-related summary values.
+
+This data is private/confidential, but its presence is **not** a reason to refuse a normal statement import.
+
+Mailing/email/contact data is excluded by default when it is not needed for a supported finance feature. The original source PDF/image/spreadsheet is not intentionally stored.
 
 ### Repository safety
 
