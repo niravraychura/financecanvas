@@ -5,7 +5,7 @@ FinanceCanvas has two parts:
 1. the **portable AI Skill** — `SKILL.md` plus the files under `references/`;
 2. the **optional persistent data layer** — Supabase migrations + the restricted `financecanvas-api` Edge Function.
 
-For personal use, the recommended setup is **Supabase Free + connector-first owner maintenance + restricted runtime access**.
+For personal use, the recommended setup is **bring-your-own Supabase + connector-first access**. Each user selects their own Supabase project; FinanceCanvas does not require a shared central project.
 
 > Do not paste Supabase server/admin credentials into chat. Do not commit secrets to GitHub.
 
@@ -63,9 +63,11 @@ Copy or link the **whole FinanceCanvas directory**, not only `SKILL.md`, into th
 
 The exact Skills-directory path is host-specific and can change; follow your host's current documentation.
 
-### ChatGPT with an authorized Supabase connector
+### AI host with an authorized Supabase connector
 
-For owner/developer maintenance, connect Supabase through the host's authorized connector/plugin and authorize the FinanceCanvas project.
+Connect Supabase through the host's authorized connector/plugin and authorize the user's own Supabase account/project.
+
+Do not assume a project named `FinanceCanvas` belongs to the Skill author or is the correct project. Discover the connected user's accessible projects at runtime; if multiple are available, ask which one should store FinanceCanvas data.
 
 In this mode:
 
@@ -78,7 +80,7 @@ In this mode:
 
 ### Option A — authorized Supabase connector
 
-Use the authorized owner/developer connector to apply every SQL migration under:
+Use the authorized connector against the **user-selected project** to apply every SQL migration under:
 
 ```text
 supabase/migrations/
@@ -111,9 +113,11 @@ supabase db push
 
 Do not use `db reset` against a project containing real FinanceCanvas data unless you intentionally want to destroy it.
 
-## 4. Deploy the Edge Function
+## 4. Deploy the Edge Function (optional in connector mode)
 
-The Edge Function is the recommended restricted runtime adapter for external LLMs/apps.
+If the user's AI host already has an authorized Supabase connector, the Edge Function is not required for first initialization or ordinary personal connector-mode use.
+
+The Edge Function is the recommended restricted runtime adapter for external LLMs/apps that do not have that connector.
 
 With Supabase CLI:
 
@@ -163,11 +167,23 @@ Use it to:
 
 If you are only using an authorized owner Supabase connector for maintenance and do not need the Edge API yet, skip this step entirely.
 
-### Mode 1 — connector-first owner/personal maintenance
+### Mode 1 — connector-first personal/private use
 
-If your AI host already has an explicitly authorized Supabase connector and you are the owner/developer, no local FinanceCanvas secret is required for maintenance.
+If the user's AI host already has an explicitly authorized Supabase connector, no local FinanceCanvas secret is required.
 
-This is convenient, but remember that an admin connector can bypass application safeguards. Normal financial operations should follow the Skill rules and, where practical, use the restricted API.
+FinanceCanvas discovers/selects that user's project and uses the connector-native routines documented in `references/CONNECTOR_MODE.md`.
+
+The first workspace is initialized with:
+
+```sql
+select financecanvas_private.initialize_workspace(
+  '<workspace name>',
+  '<currency>',
+  '<profile name>'
+);
+```
+
+The connector is privileged, so FinanceCanvas must remain limited to approved FinanceCanvas tables/functions and confirmation rules.
 
 ### Mode 2 — restricted external runtime
 
