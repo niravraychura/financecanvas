@@ -246,7 +246,7 @@ Editing `SKILL.md` must not silently remove database/API enforcement for:
 Install FinanceCanvas globally into every supported local AI agent detected on your machine:
 
 ```bash
-npx skills add niravraychura/financecanvas --all -g
+npx --yes github:niravraychura/financecanvas
 ```
 
 Then open Claude Code, Cursor, Codex, or another Agent-Skills-compatible agent and say:
@@ -257,7 +257,13 @@ Initialize FinanceCanvas.
 
 That's the normal installation path. No repository clone is required just to install the Skill.
 
-The open `skills` CLI installs Agent Skills from GitHub and supports Claude Code, Cursor, Codex and many other agents.
+FinanceCanvas ships its own cross-platform installer so the primary one-liner does not depend on third-party global-link behavior. It installs to the universal Agent Skills directory plus the standard global skill locations for Claude Code, Cursor, Codex and Gemini CLI.
+
+Standards-compatible alternative:
+
+```bash
+npx skills add niravraychura/financecanvas --all -g -y
+```
 
 ### ChatGPT web
 
