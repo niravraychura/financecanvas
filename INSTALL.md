@@ -31,6 +31,20 @@ Initialize FinanceCanvas.
 
 FinanceCanvas will detect the available environment and guide the first-time data-layer setup only if you want persistent finance storage.
 
+### Persistent storage: each user brings their own Supabase
+
+The installer does **not** connect users to the author's Supabase project.
+
+If your AI host already has an authorized Supabase connector:
+
+1. FinanceCanvas lists the projects available to **that user**.
+2. If there is one suitable project, it uses it; if there are several, it asks which one should store FinanceCanvas data.
+3. It checks whether FinanceCanvas is installed in that selected project.
+4. With confirmation, it can install/upgrade the bundled FinanceCanvas schema there.
+5. It initializes the user's workspace through the private connector bootstrap routine.
+
+No Supabase admin `.env` or copied service key is needed when the connector is already authorized.
+
 ## ChatGPT web
 
 ChatGPT's current Skills experience installs skills through the ChatGPT UI rather than a local shell command.
