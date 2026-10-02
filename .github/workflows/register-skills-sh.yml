@@ -2,11 +2,6 @@ name: Register skills.sh
 
 on:
   workflow_dispatch:
-  push:
-    paths:
-      - ".github/workflows/register-skills-sh.yml"
-      - "skills.sh.json"
-      - "SKILL.md"
 
 permissions:
   contents: read
