@@ -8,7 +8,9 @@ Open-source personal finance AI agent skill / personal CFO for ChatGPT, Claude C
 
 ## Homepage
 
-https://skills.sh/niravraychura/financecanvas
+https://github.com/niravraychura/financecanvas
+
+Use the GitHub repository as the canonical homepage until the public skills.sh page is confirmed indexed and accessible.
 
 ## Topics
 
@@ -40,7 +42,7 @@ A repository administrator can apply the description/homepage/topics with:
 ```bash
 gh repo edit niravraychura/financecanvas \
   --description "Open-source personal finance AI agent skill / personal CFO for ChatGPT, Claude Code, Cursor and Codex. Supabase-backed statements, budgets, cards, loans, investments and alerts." \
-  --homepage "https://skills.sh/niravraychura/financecanvas" \
+  --homepage "https://github.com/niravraychura/financecanvas" \
   --add-topic agent-skills \
   --add-topic personal-finance \
   --add-topic personal-cfo \
