@@ -1,6 +1,8 @@
 # FinanceCanvas Controlled Operations
 
-The Edge Function is an optional restricted runtime adapter. Owner/developer maintenance may use an explicitly authorized Supabase connector, but normal runtime should remain least-privilege.
+The Edge Function is an optional restricted runtime adapter.
+
+For personal/private **BYO Supabase connector mode**, an explicitly authorized Supabase connector may be the runtime data path when it follows `CONNECTOR_MODE.md`. External/non-connector runtimes should use the restricted Edge Function/API.
 
 ## Read
 - initialization_status
@@ -50,7 +52,7 @@ External API keys should be bound to a workspace whenever practical and limited 
 ## Invariants
 
 Regardless of access path:
-- no arbitrary SQL from the Skill;
+- no arbitrary/ad-hoc SQL from the Skill; connector mode may use only the approved SQL/RPC procedures documented in `CONNECTOR_MODE.md`;
 - no critical-secret persistence;
 - exact duplicate protection;
 - reason-required duplicate overrides;
@@ -79,3 +81,28 @@ Transaction batch commits use the database RPC `financecanvas_commit_transaction
 `detect_recurring_patterns` discovers recurring transaction patterns but does not persist them without user confirmation.
 
 `check_import_hash` checks a SHA-256 source-document digest without storing the source file.
+
+
+## Connector-native bootstrap
+
+When an authorized Supabase connector is available, the Skill does not need the HTTP `initialization_status` or `initialize_workspace` operations to be exposed as tools.
+
+Use:
+
+```sql
+select financecanvas_private.connector_status();
+```
+
+and:
+
+```sql
+select financecanvas_private.initialize_workspace(
+  '<workspace name>',
+  '<base currency>',
+  '<profile name>'
+);
+```
+
+These routines operate in the user-selected Supabase project and are not granted to `anon` or `authenticated`.
+
+Never hardcode the repository author's Supabase project reference/URL.
