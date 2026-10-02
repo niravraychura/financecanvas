@@ -135,3 +135,58 @@ Verified:
 - all synthetic workspace/import/account/transaction data was deleted after the test.
 
 The connector-native import path does not require the FinanceCanvas Edge Function operations to be exposed as tools.
+
+
+## Non-transaction connector import validation
+
+A full BYO-Supabase connector acceptance run was completed with synthetic data.
+
+The test committed one controlled document containing:
+
+- insurance policy;
+- insurance premium history;
+- loan;
+- loan payment;
+- investment holding;
+- investment transaction;
+- income source;
+- asset;
+- liability;
+- subscription;
+- goal;
+- recurring item.
+
+Verified:
+
+- all primary records previewed as `ready`;
+- all three supported child-event types previewed as `ready`;
+- all records committed in one controlled structured-document import;
+- `import_entities` contained 12 evidence links (9 primary records + 3 child records);
+- the import record count matched 12;
+- `source_document_stored=false`;
+- a later portfolio statement returned `changed_existing` with field-level differences;
+- the changed investment was not updated without an explicit decision;
+- after `update_existing` with a reason and final confirmation, the valuation updated;
+- the already-imported investment event was skipped rather than duplicated.
+
+### Salary/pay-slip validation
+
+Verified:
+
+- salary document preview;
+- long-lived income-source creation;
+- dated `income_payment` creation with pay period, gross/net amount, tax withheld and deductions;
+- duplicate source-hash detection for the same payslip;
+- source file not stored.
+
+### Tax-document validation
+
+Verified:
+
+- minimized tax-summary preview and commit;
+- gross/taxable income, tax paid/due/refund and filing status/date storage;
+- source file not stored;
+- duplicate source-hash detection;
+- PAN-bearing test payload rejected with `HIGH_RISK_IDENTIFIER_DETECTED`.
+
+All synthetic entity/salary/tax workspaces and records were deleted after testing. The user's real workspace was not modified by the acceptance cleanup.
