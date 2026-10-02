@@ -105,3 +105,94 @@ This allows exact end-of-day historical balance answers when the statement conta
 After a successful import that provides enough history, call `detect_recurring_patterns`.
 
 Detected patterns are suggestions only. Show the merchant, interval, amount stability and confidence, and ask before creating/updating a recurring item or subscription.
+
+
+## Non-transaction document imports
+
+Transaction statements use the statement import pipeline. Other financial documents must not be forced through transaction-only APIs.
+
+### Supported connector-native entity imports
+
+`financecanvas_private.preview_financial_document` and `financecanvas_private.commit_financial_document` support:
+
+- insurance policies;
+- loans;
+- investment/holding records;
+- income sources;
+- assets;
+- liabilities;
+- subscriptions;
+- goals;
+- recurring items.
+
+Supported child/history records include:
+
+- insurance premiums;
+- loan payments;
+- investment transactions/events.
+
+The source document is never intentionally stored.
+
+### Changed existing entities
+
+A natural-key match with changed values returns `changed_existing` plus field-level differences.
+
+Do not update automatically.
+
+The user must choose:
+
+- `keep_existing`
+- `update_existing`
+- `add_separate`
+
+`update_existing` and `add_separate` require a non-empty reason and final import confirmation.
+
+### Child-event duplicates
+
+Exact duplicate child events must not be silently inserted.
+
+Ask:
+
+- `skip`
+- `add_separate`
+
+`add_separate` requires a reason.
+
+### Salary/pay slips
+
+Use `preview_salary_document` / `commit_salary_document`.
+
+Persist:
+
+- long-lived income-source facts;
+- pay period;
+- payment date;
+- gross/net amount;
+- tax withheld;
+- other deductions;
+- currency;
+- safe metadata.
+
+Do not persist the payslip file.
+
+### Tax documents
+
+Use `preview_tax_document` / `commit_tax_document`.
+
+Persist minimized financial/tax summary facts only, such as:
+
+- jurisdiction;
+- tax year;
+- form type;
+- gross/taxable income;
+- tax paid/due;
+- refund amount;
+- filing status/date.
+
+Never persist PAN, Aadhaar/VID, passport/tax identifiers, passwords, OTPs, or other blocked identifiers/secrets from a tax document.
+
+### Source-hash rule
+
+When a source SHA-256 is available, it must be lowercase 64-character hex and is used only as a non-reversible duplicate signal.
+
+Committed/completed imports with the same workspace + source hash must not be imported again without review.
