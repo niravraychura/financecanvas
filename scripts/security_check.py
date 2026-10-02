@@ -54,7 +54,9 @@ REQUIRED_FILES = {
     "references/MEMORY_AND_RECOMMENDATIONS.md",
     "references/FINANCIAL_HEALTH_RULES.md",
     "references/SCENARIO_RULES.md",
+    "references/CONNECTOR_MODE.md",
     "supabase/functions/financecanvas-api/index.ts",
+    "supabase/migrations/20261002063000_financecanvas_v01_connector_bootstrap.sql",
 }
 
 FORBIDDEN_SUFFIXES = {
@@ -68,6 +70,11 @@ FORBIDDEN_BASENAMES = {
     "credentials.json",
     "service-account.json",
 }
+
+HARDCODED_SUPABASE_PROJECT_URL = re.compile(
+    r"https://(?!YOUR_PROJECT_REF|your-project-ref)[a-z0-9]{20}\.supabase\.co",
+    re.IGNORECASE,
+)
 
 SECRET_PATTERNS = [
     ("Supabase secret key", re.compile(r"sb_secret_[A-Za-z0-9._-]{16,}")),
@@ -84,6 +91,8 @@ REQUIRED_SKILL_PHRASES = [
     "permanent deletions",
     "critical secrets",
     "controlled FinanceCanvas API",
+    "BYO Supabase",
+    "financecanvas_private.initialize_workspace",
     "Sensitive-data warning",
 ]
 
@@ -163,6 +172,8 @@ def main() -> int:
         for label, pattern in SECRET_PATTERNS:
             if pattern.search(content):
                 errors.append(f"Potential {label} found in tracked file: {rel}")
+        if HARDCODED_SUPABASE_PROJECT_URL.search(content):
+            errors.append(f"Hardcoded real-looking Supabase project URL found in tracked file: {rel}")
 
     readme = text_of(ROOT / "README.md")
     install_doc = text_of(ROOT / "INSTALL.md")
@@ -191,6 +202,16 @@ def main() -> int:
     for phrase in REQUIRED_SKILL_PHRASES:
         if phrase.lower() not in skill.lower():
             errors.append(f"SKILL.md missing required guardrail phrase: {phrase}")
+
+    connector_mode = text_of(ROOT / "references/CONNECTOR_MODE.md")
+    for marker in ["bring-your-own-Supabase", "financecanvas_private.connector_status", "financecanvas_private.initialize_workspace", "Never hardcode"]:
+        if marker.lower() not in connector_mode.lower():
+            errors.append(f"CONNECTOR_MODE.md missing required portability marker: {marker}")
+
+    connector_bootstrap = text_of(ROOT / "supabase/migrations/20261002063000_financecanvas_v01_connector_bootstrap.sql")
+    for marker in ["create schema if not exists financecanvas_private", "security invoker", "connector_status", "initialize_workspace", "revoke all on function"]:
+        if marker.lower() not in connector_bootstrap.lower():
+            errors.append(f"Connector bootstrap migration missing security marker: {marker}")
 
     api = text_of(ROOT / "supabase/functions/financecanvas-api/index.ts")
     for marker in REQUIRED_API_MARKERS:
