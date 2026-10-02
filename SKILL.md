@@ -205,27 +205,50 @@ Temporary input formats may include PDF, JPG/JPEG, PNG/screenshots, CSV, XLS/XLS
 For every import:
 
 1. Identify the document/data type.
-2. When source bytes are accessible, compute a SHA-256 digest before import. In API mode call `check_import_hash`; in connector mode pass the digest to `financecanvas_private.preview_statement_import`. If the same committed/completed source already exists, stop and show the existing import. Never persist the source bytes.
-3. Identify likely owner/profile and account/institution.
+2. When source bytes are accessible, compute a SHA-256 digest before import. Never persist the source bytes.
+3. Identify likely owner/profile plus any account/institution/entity involved.
 4. Run the sensitive-data classification before persistence and warn/redact/reject as required.
-4. Extract only the minimum structured facts necessary for the user's stated purpose.
-5. Preserve meaningful raw text separately from normalized values only when it contains no prohibited secret or blocked identifier.
-6. Normalize merchant/category labels.
-7. Validate, reconcile, deduplicate, and score confidence.
-8. Preview before any transaction commit:
-   - API mode: call `preview_transaction_import`.
-   - BYO Supabase connector mode: call `financecanvas_private.preview_statement_import` using the user-selected workspace/profile/account.
-9. Ask only about uncertain/conflicting/materially corrected items.
-10. For material spelling/grammar corrections, show Original + Suggested and ask: **Accept correction / Keep original / Edit**.
-11. Resolve duplicates using the workflow below.
-12. Present a final summary including what will be stored and what was excluded/masked.
-13. Ask for one final confirmation.
-14. Commit only after explicit confirmation:
-   - API mode: call `commit_transactions` with `final_confirmation=true`.
-   - BYO Supabase connector mode: call `financecanvas_private.commit_statement_import(..., p_final_confirmation => true)`. This procedure rechecks duplicates and commits the import/transactions atomically.
-15. Do not intentionally store the source document in FinanceCanvas.
+5. Extract only the minimum structured facts necessary for the user's stated purpose.
+6. Preserve meaningful raw text separately from normalized values only when it contains no prohibited secret or blocked identifier.
+7. Normalize merchant/category/entity labels.
+8. Validate, reconcile where applicable, deduplicate, and score confidence.
+9. Route the import to the correct controlled preview:
+   - **Transaction statements** (bank, credit-card, wallet, brokerage cash history, CSV/XLS transaction exports): API mode uses `preview_transaction_import`; connector mode uses `financecanvas_private.preview_statement_import`.
+   - **Structured financial documents** (insurance policies, loans, portfolio/holding statements, assets, liabilities, subscriptions, goals, recurring items): connector mode uses `financecanvas_private.preview_financial_document`.
+   - **Salary/pay slips**: connector mode uses `financecanvas_private.preview_salary_document`.
+   - **Tax summaries/returns**: connector mode uses `financecanvas_private.preview_tax_document`.
+10. Ask only about uncertain/conflicting/materially corrected items.
+11. For material spelling/grammar corrections, show Original + Suggested and ask: **Accept correction / Keep original / Edit**.
+12. Resolve duplicates/changed existing records using the workflow below.
+13. Present a final summary including what will be stored and what was excluded/masked.
+14. Ask for one final confirmation.
+15. Commit only after explicit confirmation:
+   - Transaction API mode: `commit_transactions` with `final_confirmation=true`.
+   - Transaction connector mode: `financecanvas_private.commit_statement_import(..., p_final_confirmation => true)`.
+   - Structured-document connector mode: `financecanvas_private.commit_financial_document(..., p_final_confirmation => true)`.
+   - Salary/pay-slip connector mode: `financecanvas_private.commit_salary_document(..., p_final_confirmation => true)`.
+   - Tax connector mode: `financecanvas_private.commit_tax_document(..., p_final_confirmation => true)`.
+16. Do not intentionally store the source document in FinanceCanvas.
+
+The connector-native commit procedures perform their own duplicate/conflict recheck at commit time and use one database transaction for their controlled write set.
 
 If 47 records are clear and 3 need review, ask only about the 3 before final confirmation.
+
+### Document-to-record routing
+
+Use these structured targets:
+
+- **Insurance policy / renewal schedule** → `insurance_policy`; premium history → `insurance_premium` child events.
+- **Loan sanction / loan statement** → `loan`; repayment history → `loan_payment` child events.
+- **Investment / portfolio / holdings statement** → one or more `investment` records; buys/sells/dividends or other recorded events → `investment_transaction` child events.
+- **Salary/pay slip** → `income_source` plus dated `income_payment` history.
+- **Asset valuation/ownership document** → `asset`.
+- **Non-loan liability statement** → `liability`.
+- **Subscription/contract/bill** → `subscription` and/or `recurring_item` when supported by the document.
+- **Tax summary/return** → `tax_record` containing minimized financial totals only; PAN/Aadhaar/passport/tax identifiers are not persisted.
+- **Goal documents/data** → `goal`.
+
+If one document contains several holdings/entities, send them together in the structured-document records array so the import is committed atomically.
 
 When the statement contains a running-balance column, extract `balance_after`. When multiple transactions share the same date, preserve the statement row/order as `source_sequence`.
 
@@ -267,7 +290,15 @@ Show a field-by-field difference and ask:
 
 Update or Add-as-separate requires a reason. Never silently overwrite existing data.
 
-Edits must use the request/confirm edit API, so confirmation is independently enforced outside this Skill.
+Outside an import, edits must use the request/confirm edit workflow.
+
+During a connector-native structured-document import, an existing loan/policy/investment/income/asset/liability/subscription/goal/recurring/tax record may be updated only when:
+1. preview returned `changed_existing` with field-level differences;
+2. the user explicitly chose **Update existing**;
+3. a non-empty reason was supplied; and
+4. the user gave the final document-import confirmation.
+
+The connector commit procedure records the reason and audit entry.
 
 ## Editing and deleting
 
