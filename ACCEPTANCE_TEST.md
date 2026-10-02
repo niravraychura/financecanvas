@@ -106,3 +106,32 @@ Before running it:
 6. remove the repository secret if it is no longer needed.
 
 Never commit the bootstrap key or place it in workflow YAML.
+
+
+## BYO Supabase connector statement validation
+
+A connector-native synthetic credit-card statement flow was validated against the reference Supabase project on 2 October 2026.
+
+The test intentionally mirrored the structure of a normal masked credit-card statement without using real customer financial data.
+
+Verified:
+
+- connector-native workspace/profile initialization;
+- masked card/account resolution using last four digits only;
+- institution/account creation through `financecanvas_private.ensure_account`;
+- source-document SHA-256 preview protection;
+- transaction preview through `financecanvas_private.preview_statement_import`;
+- three synthetic transactions returned `ready`;
+- final commit through `financecanvas_private.commit_statement_import`;
+- all three transactions committed atomically;
+- structured credit-card statement metadata persisted;
+- statement total and due date persisted;
+- import metadata marked `privacy_classification=private_financial`;
+- import metadata marked `source_document_stored=false`;
+- exact transaction duplicate detected when re-previewed under a different source hash;
+- identical source hash detected as `duplicate_source_document`;
+- duplicate commit without a user resolution returned `atomic_commit=false`;
+- transaction count remained unchanged after the duplicate conflict;
+- all synthetic workspace/import/account/transaction data was deleted after the test.
+
+The connector-native import path does not require the FinanceCanvas Edge Function operations to be exposed as tools.
