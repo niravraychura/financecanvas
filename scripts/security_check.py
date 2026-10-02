@@ -27,6 +27,8 @@ REQUIRED_FILES = {
     "CONTRIBUTING.md",
     "AGENTS.md",
     "ROADMAP.md",
+    "package.json",
+    "bin/install.mjs",
     "LICENSE",
     "NOTICE",
     "CITATION.cff",
@@ -74,7 +76,7 @@ SECRET_PATTERNS = [
     ("non-empty Supabase server-key assignment", re.compile(r"SUPABASE_SERVICE_ROLE_KEY\s*=\s*[^\s#]{20,}")),
 ]
 
-CANONICAL_INSTALL = "npx skills add niravraychura/financecanvas --all -g"
+CANONICAL_INSTALL = "npx --yes github:niravraychura/financecanvas"
 
 REQUIRED_SKILL_PHRASES = [
     "Exact duplicates must never be silently inserted",
@@ -169,6 +171,13 @@ def main() -> int:
         errors.append("README.md and INSTALL.md must contain the canonical one-command installer")
     if "Apache License" not in license_text or "Version 2.0" not in license_text:
         errors.append("LICENSE must contain Apache License 2.0")
+    package_json = text_of(ROOT / "package.json")
+    if '"license": "Apache-2.0"' not in package_json:
+        errors.append("package.json must declare Apache-2.0")
+    installer = text_of(ROOT / "bin/install.mjs")
+    for marker in [".agents", ".claude", ".cursor", ".codex", ".gemini", "No Supabase/admin secret"]:
+        if marker not in installer:
+            errors.append(f"Installer missing required portability/security marker: {marker}")
 
     skill = text_of(ROOT / "SKILL.md")
     if "license: Apache-2.0" not in skill:
