@@ -20,14 +20,17 @@ jobs:
           node-version: "22"
       - name: Validate Agent Skills discovery
         run: npx -y skills add . --list
-      - name: Test advertised one-command install
+      - name: Validate installer syntax
+        run: node --check bin/install.mjs
+      - name: Test public one-command FinanceCanvas installer
         env:
           HOME: ${{ runner.temp }}/financecanvas-home
         run: |
-          mkdir -p "$HOME/.claude/skills" "$HOME/.cursor/skills" "$HOME/.codex/skills"
-          npx -y skills add niravraychura/financecanvas --all -g -y
-          echo "Installed skill manifests:"
-          find "$HOME" -type f -name SKILL.md -print
+          mkdir -p "$HOME"
+          npx --yes github:niravraychura/financecanvas
+          test -f "$HOME/.agents/skills/financecanvas/SKILL.md"
           test -f "$HOME/.claude/skills/financecanvas/SKILL.md"
           test -f "$HOME/.cursor/skills/financecanvas/SKILL.md"
           test -f "$HOME/.codex/skills/financecanvas/SKILL.md"
+          test -f "$HOME/.gemini/skills/financecanvas/SKILL.md"
+          grep -q "name: financecanvas" "$HOME/.agents/skills/financecanvas/SKILL.md"
