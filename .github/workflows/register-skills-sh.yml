@@ -5,6 +5,8 @@ on:
   push:
     paths:
       - ".github/workflows/register-skills-sh.yml"
+      - "skills.sh.json"
+      - "SKILL.md"
 
 permissions:
   contents: read
@@ -18,8 +20,10 @@ jobs:
         with:
           node-version: "22"
       - name: Register FinanceCanvas through official skills CLI
+        env:
+          HOME: ${{ runner.temp }}/financecanvas-home
         run: |
-          mkdir -p .codex/skills
-          npx -y skills add https://github.com/niravraychura/financecanvas --skill financecanvas -a codex --copy -y
-          test -f .codex/skills/financecanvas/SKILL.md
+          mkdir -p "$HOME/.codex/skills"
+          npx -y skills add https://github.com/niravraychura/financecanvas --skill financecanvas -g -a codex --copy -y
+          test -f "$HOME/.codex/skills/financecanvas/SKILL.md"
           echo "FinanceCanvas installed successfully through the official skills CLI with telemetry enabled."
