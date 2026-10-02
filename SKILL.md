@@ -53,33 +53,47 @@ Rules:
 - Duplicate review, confirmation, deletion, audit, and sensitive-data rules remain mandatory regardless of access path.
 - In connector mode, narrowly scoped SQL/RPCs documented in `references/CONNECTOR_MODE.md` are allowed. Arbitrary SQL is not.
 
-## Sensitive-data warning and minimization
+## Sensitive-data warning and classification
 
-Before persisting information from an upload, classify it:
+FinanceCanvas handles private financial data, but **ordinary statement data is normally importable**. Privacy classification must not be used as a reason to refuse a normal statement import.
 
-### Critical secrets — never persist or repeat
-Examples: CVV/CVC, ATM/UPI/card PIN, OTP, password/passcode, recovery phrase/seed phrase, private key, API/refresh/access token.
+### Class A — critical secrets: never persist or repeat
+Examples: CVV/CVC, ATM/UPI/card PIN, OTP, password/passcode, recovery phrase/seed phrase, private key, API/access/refresh token.
 
 If detected:
-1. warn the user immediately that the upload contains a critical secret;
+1. warn the user immediately;
 2. do not quote the secret back in chat;
 3. do not save it to FinanceCanvas;
 4. redact it from structured output/logs;
-5. explain the appropriate next step — for example change/rotate the password/token, regenerate a key, or contact the bank/card issuer if payment credentials were exposed.
+5. explain the appropriate remediation step.
 
-### High-risk identifiers — minimize by default
+### Class B — restricted identifiers: mask/minimize
 Examples: full card number, full bank account number, Aadhaar/VID, PAN, passport or tax identifiers.
 
-- FinanceCanvas normally stores only masked/card/account last-four identifiers.
+- Store masked/card/account last-four identifiers when useful.
 - Do not store Aadhaar/VID/PAN/passport values in v0.1.
-- If a future feature genuinely requires such an identifier, require a documented lawful purpose, explicit notice/consent where applicable, a specific retention period, and a dedicated security review before enabling it.
+- Full account/card identifiers must be removed or reduced to an allowed masked form before persistence.
 
-### Ordinary financial data
-Transactions, balances, merchant names, categories, loan/insurance/investment facts and similar structured financial records may be stored only through the normal validation and confirmation workflow.
+### Class C — private operational financial/personal data: allowed when needed
+Examples include:
+- profile/full name;
+- already-masked card/account identifier;
+- transactions, merchants, amounts and categories;
+- statement period/date;
+- total/minimum due;
+- balances, limits and available credit;
+- payment due dates;
+- reward points and finance-related summary values.
 
-When a document appears sensitive, show a warning such as:
+These are private/confidential data, but they are exactly the type of structured information FinanceCanvas is intended to store when the user asks for persistent finance tracking.
 
-> Sensitive financial information detected. FinanceCanvas will extract only the minimum allowed structured data, mask identifiers, and will not intentionally persist the source document. Critical secrets such as PINs, OTPs, passwords and CVVs will not be saved. The chat/LLM host may retain the uploaded file under its own privacy and retention policy.
+Mailing address, email address and similar contact data are ordinary personal data rather than authentication secrets. They are **not automatically prohibited**, but FinanceCanvas normally has no financial need to persist them from a statement, so exclude them by default unless a supported feature requires them.
+
+For an ordinary bank/credit-card statement, use a short notice such as:
+
+> Private financial data detected. FinanceCanvas can import the needed structured financial fields. The source document itself will not be stored, and any critical secrets or full high-risk identifiers will be excluded or masked.
+
+Do not repeatedly warn or stop the workflow merely because transactions, balances, the user's name, or an already-masked card number are present.
 
 Do not imply that FinanceCanvas controls or deletes the host platform's copy of an uploaded file.
 
@@ -191,20 +205,24 @@ Temporary input formats may include PDF, JPG/JPEG, PNG/screenshots, CSV, XLS/XLS
 For every import:
 
 1. Identify the document/data type.
-2. When source bytes are accessible, compute a SHA-256 digest and call `check_import_hash` before import. If the same committed/completed source already exists, stop and show the existing import. Never persist the source bytes.
+2. When source bytes are accessible, compute a SHA-256 digest before import. In API mode call `check_import_hash`; in connector mode pass the digest to `financecanvas_private.preview_statement_import`. If the same committed/completed source already exists, stop and show the existing import. Never persist the source bytes.
 3. Identify likely owner/profile and account/institution.
 4. Run the sensitive-data classification before persistence and warn/redact/reject as required.
 4. Extract only the minimum structured facts necessary for the user's stated purpose.
 5. Preserve meaningful raw text separately from normalized values only when it contains no prohibited secret or blocked identifier.
 6. Normalize merchant/category labels.
 7. Validate, reconcile, deduplicate, and score confidence.
-8. Call `preview_transaction_import` before any transaction commit.
+8. Preview before any transaction commit:
+   - API mode: call `preview_transaction_import`.
+   - BYO Supabase connector mode: call `financecanvas_private.preview_statement_import` using the user-selected workspace/profile/account.
 9. Ask only about uncertain/conflicting/materially corrected items.
 10. For material spelling/grammar corrections, show Original + Suggested and ask: **Accept correction / Keep original / Edit**.
 11. Resolve duplicates using the workflow below.
 12. Present a final summary including what will be stored and what was excluded/masked.
 13. Ask for one final confirmation.
-14. Call `commit_transactions` only with `final_confirmation=true` after explicit confirmation.
+14. Commit only after explicit confirmation:
+   - API mode: call `commit_transactions` with `final_confirmation=true`.
+   - BYO Supabase connector mode: call `financecanvas_private.commit_statement_import(..., p_final_confirmation => true)`. This procedure rechecks duplicates and commits the import/transactions atomically.
 15. Do not intentionally store the source document in FinanceCanvas.
 
 If 47 records are clear and 3 need review, ask only about the 3 before final confirmation.
