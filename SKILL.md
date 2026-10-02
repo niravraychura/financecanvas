@@ -5,7 +5,7 @@ license: Apache-2.0
 compatibility: Agent Skills compatible. Persistent mode requires an authorized Supabase connector or a configured FinanceCanvas API endpoint.
 metadata:
   author: niravraychura
-  version: "0.1.2"
+  version: "0.1.3"
   homepage: https://github.com/niravraychura/financecanvas
   category: personal-finance
 ---
