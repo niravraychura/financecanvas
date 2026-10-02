@@ -29,6 +29,7 @@ Account/card identifiers are masked/final-four only.
 - imports
 - extracted_fields
 - confirmation_queue
+- import_entities
 - transactions
 - transaction_splits
 - merchant_aliases
@@ -62,6 +63,7 @@ Ownership percentages can represent joint assets/liabilities/loans.
 - goals
 - budgets
 - income_sources
+- income_payments
 - subscriptions
 - recurring_items
 
@@ -84,9 +86,23 @@ Ownership percentages can represent joint assets/liabilities/loans.
 - financecanvas_compliance_settings
 - financial_preferences
 - recommendations
+- tax_records
 
 ## Workspace invariant
 
 Records with a workspace_id must belong to the current workspace. Relationship/reference writes through the controlled API validate that referenced records belong to the same workspace.
 
 Normal runtime clients must not receive arbitrary project-admin database access.
+
+
+## Structured document evidence
+
+`import_entities` links structured-document imports to the financial entities created, updated, reused or deliberately duplicated.
+
+It stores references/actions only; it is not a copy of the source document.
+
+`income_payments` preserves dated salary/pay-slip history separately from the long-lived `income_sources` record.
+
+`tax_records` stores minimized tax summary values and must never contain PAN, Aadhaar/VID, passport/tax identifiers or authentication secrets.
+
+All source documents remain temporary inputs; only allowed structured values, source hash metadata and evidence links persist.
