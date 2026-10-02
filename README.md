@@ -3,7 +3,6 @@
 **FinanceCanvas is a portable AI Personal CFO skill with a structured, user-controlled Supabase data layer.**
 
 [![CI](https://github.com/niravraychura/financecanvas/actions/workflows/ci.yml/badge.svg)](https://github.com/niravraychura/financecanvas/actions/workflows/ci.yml)
-[![skills.sh](https://skills.sh/b/niravraychura/financecanvas)](https://skills.sh/niravraychura/financecanvas)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
 [![Agent Skills](https://img.shields.io/badge/Agent%20Skills-compatible-5c6ac4)](https://agentskills.io/)
 
