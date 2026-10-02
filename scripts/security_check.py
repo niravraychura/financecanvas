@@ -61,6 +61,9 @@ REQUIRED_FILES = {
     "supabase/migrations/20261002071000_financecanvas_v011_connector_statement_import.sql",
     "supabase/migrations/20261002072000_financecanvas_v012_connector_import_privacy.sql",
     "supabase/migrations/20261002072500_financecanvas_v012_schema_version.sql",
+    "supabase/migrations/20261002075500_financecanvas_v013_connector_entity_import.sql",
+    "supabase/migrations/20261002082500_financecanvas_v014_salary_tax_import.sql",
+    "supabase/migrations/20261002084000_financecanvas_v013_privacy_constraints.sql",
 }
 
 FORBIDDEN_SUFFIXES = {
@@ -97,6 +100,9 @@ REQUIRED_SKILL_PHRASES = [
     "controlled FinanceCanvas API",
     "BYO Supabase",
     "financecanvas_private.initialize_workspace",
+    "financecanvas_private.preview_financial_document",
+    "financecanvas_private.preview_salary_document",
+    "financecanvas_private.preview_tax_document",
     "Sensitive-data warning",
 ]
 
@@ -239,6 +245,12 @@ def main() -> int:
         "financecanvas_private.ensure_account",
         "financecanvas_private.preview_statement_import",
         "financecanvas_private.commit_statement_import",
+        "financecanvas_private.preview_financial_document",
+        "financecanvas_private.commit_financial_document",
+        "financecanvas_private.preview_salary_document",
+        "financecanvas_private.commit_salary_document",
+        "financecanvas_private.preview_tax_document",
+        "financecanvas_private.commit_tax_document",
         "Base64",
         "Never hardcode",
     ]:
@@ -294,8 +306,47 @@ def main() -> int:
                 f"Connector import privacy migration missing required marker: {marker}"
             )
 
+    entity_import = text_of(
+        ROOT / "supabase/migrations/20261002075500_financecanvas_v013_connector_entity_import.sql"
+    )
+    for marker in [
+        "create table if not exists public.import_entities",
+        "preview_financial_document",
+        "commit_financial_document",
+        "changed_existing",
+        "update_existing",
+        "insurance_premium",
+        "loan_payment",
+        "investment_transaction",
+        "source_document_stored",
+        "revoke all on function",
+    ]:
+        if marker.lower() not in entity_import.lower():
+            errors.append(
+                f"Connector entity import migration missing required marker: {marker}"
+            )
+
+    salary_tax_import = text_of(
+        ROOT / "supabase/migrations/20261002082500_financecanvas_v014_salary_tax_import.sql"
+    )
+    for marker in [
+        "create table if not exists public.income_payments",
+        "create table if not exists public.tax_records",
+        "preview_salary_document",
+        "commit_salary_document",
+        "preview_tax_document",
+        "commit_tax_document",
+        "tax_identifiers_stored",
+        "source_document_stored",
+        "revoke all on function",
+    ]:
+        if marker.lower() not in salary_tax_import.lower():
+            errors.append(
+                f"Salary/tax import migration missing required marker: {marker}"
+            )
+
     schema_version_migration = text_of(
-        ROOT / "supabase/migrations/20261002072500_financecanvas_v012_schema_version.sql"
+        ROOT / "supabase/migrations/20261002084000_financecanvas_v013_privacy_constraints.sql"
     )
     package_version_match = re.search(
         r'"version"\s*:\s*"([^"]+)"', package_json
