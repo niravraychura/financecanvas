@@ -86,6 +86,140 @@ The routine is idempotent for the same workspace/profile names and records an au
 
 **Important:** If `initialize_workspace` is not exposed as an HTTP/API tool but an authorized Supabase connector exists, do **not** stop. Use this private connector routine.
 
+## Statement import in connector mode
+
+When the AI host can read a local statement/PDF **and** has an authorized Supabase connector, do not stop merely because the HTTP operations `preview_transaction_import` or `commit_transactions` are not exposed as tools.
+
+Use the connector-native routines below.
+
+### 1. Resolve/create the financial account
+
+After the user/profile is known, call:
+
+```sql
+select financecanvas_private.ensure_account(
+  '<workspace uuid>',
+  '<profile uuid>',
+  '<institution name>',
+  '<account display name>',
+  '<bank|credit_card|wallet|cash|brokerage|loan|other>',
+  '<currency>',
+  '<masked last4>',
+  <credit limit or null>
+);
+```
+
+For an already-masked card such as `4035XXXXXXXX8007`, store only `8007` in `identifier_last4`.
+
+If the routine returns material differences for an existing account (for example a changed credit limit/currency), show the difference and ask before editing the existing account. Do not silently overwrite it.
+
+### 2. Hash the source file locally
+
+If source bytes are accessible, compute SHA-256 locally and retain only the digest for duplicate protection.
+
+Do not upload/store the source PDF in Supabase.
+
+### 3. Extract and classify
+
+Ordinary statement fields are allowed structured finance data, including:
+
+- profile/full name;
+- masked card/account identifier;
+- transactions and merchant names;
+- statement dates;
+- balances/limits;
+- total/minimum due;
+- due date;
+- rewards and finance-related summary values.
+
+Exclude unnecessary address/contact/marketing/barcode data by default.
+
+Critical secrets and full restricted identifiers remain prohibited/minimized according to `IMPORT_RULES.md`.
+
+### 4. Preview through the connector
+
+Call:
+
+```sql
+select financecanvas_private.preview_statement_import(
+  '<workspace uuid>',
+  '<profile uuid>',
+  '<account uuid>',
+  '<sha256 digest or null>',
+  <transactions jsonb>
+);
+```
+
+The preview performs:
+
+- source-document duplicate check;
+- exact transaction duplicate check;
+- near-duplicate check;
+- deterministic connector fingerprinting;
+- validation of required transaction fields.
+
+If conflicts/uncertain rows exist, show only those items and collect the user's decision/reason.
+
+### 5. Final confirmation
+
+Before persistence, summarize:
+
+- account/profile;
+- statement period;
+- transaction count;
+- duplicate decisions;
+- statement totals/reconciliation when available;
+- fields excluded/masked;
+- confirmation that the source document itself will not be stored.
+
+Ask for one explicit final confirmation.
+
+### 6. Commit atomically through the connector
+
+After confirmation call:
+
+```sql
+select financecanvas_private.commit_statement_import(
+  '<workspace uuid>',
+  '<profile uuid>',
+  '<account uuid>',
+  <import metadata jsonb>,
+  <transactions jsonb>,
+  <duplicate resolutions jsonb>,
+  true
+);
+```
+
+This procedure:
+
+- rechecks exact/near duplicates at commit time;
+- blocks unresolved duplicates;
+- stores duplicate-review decisions/reasons;
+- creates structured import metadata only;
+- atomically commits the transaction batch;
+- creates credit-card statement metadata when applicable;
+- records audit/freshness data;
+- never stores the source file.
+
+If `atomic_commit=false`, do not claim the statement was imported.
+
+### Passing untrusted JSON safely through an SQL-only connector
+
+If the Supabase connector exposes only a raw `execute_sql` string interface, **do not paste document text directly into SQL string literals**.
+
+Encode the JSON payload to Base64 locally, then decode it inside SQL:
+
+```sql
+convert_from(
+  decode('<base64 of UTF-8 JSON>', 'base64'),
+  'UTF8'
+)::jsonb
+```
+
+Use this expression for transaction/import/resolution JSON arguments.
+
+This keeps merchant descriptions or other untrusted document text from becoming executable SQL.
+
 ## Connector-mode runtime rules
 
 An authorized Supabase owner connector is privileged. Treat it as a trusted owner path, not a public application API.
@@ -96,7 +230,7 @@ For personal/private connector mode:
 - Do not run ad-hoc DDL during normal finance use.
 - DDL is allowed only for an explicitly confirmed FinanceCanvas installation/upgrade using bundled migrations.
 - Prefer FinanceCanvas database functions/RPCs where they exist.
-- Transaction batch commits must use `public.financecanvas_commit_transaction_batch(...)`; never insert a confirmed imported statement row-by-row.
+- Connector statement imports must use `financecanvas_private.preview_statement_import(...)` followed by `financecanvas_private.commit_statement_import(...)`; never insert a confirmed imported statement row-by-row. The public atomic batch RPC is an internal implementation detail of the connector commit routine.
 - Exact/near duplicate review remains mandatory before commit.
 - Edits and permanent deletes must preserve FinanceCanvas's request/confirmation/audit workflow.
 - Sensitive-data minimization rules remain mandatory.
