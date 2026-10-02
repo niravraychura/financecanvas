@@ -1,6 +1,6 @@
 {
   "name": "financecanvas-skill",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Open-source personal finance AI agent skill / personal CFO for Claude Code, Cursor, Codex, ChatGPT and Agent Skills compatible assistants.",
   "type": "module",
   "bin": {
