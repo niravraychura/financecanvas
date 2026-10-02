@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.1
+
+- Fixed Codex/connector initialization when the FinanceCanvas HTTP operation is not exposed as a tool
+- Added bring-your-own-Supabase architecture: every user selects their own connected Supabase project
+- Added private connector-native `connector_status` and idempotent `initialize_workspace` RPCs
+- Removed any architectural dependency on the author's Supabase project
+- Made the Edge Function optional for connector-only personal/private use
+- Added CI guards against hardcoded real Supabase project URLs
+- Added connector-mode documentation and project-selection rules
+
 ## 0.1.0
 
 - Added one-command Agent Skills installer for Claude Code, Cursor, Codex and compatible agents
