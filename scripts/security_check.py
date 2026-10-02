@@ -57,6 +57,7 @@ REQUIRED_FILES = {
     "references/CONNECTOR_MODE.md",
     "supabase/functions/financecanvas-api/index.ts",
     "supabase/migrations/20261002063000_financecanvas_v01_connector_bootstrap.sql",
+    "supabase/migrations/20261002063500_financecanvas_v011_schema_version.sql",
 }
 
 FORBIDDEN_SUFFIXES = {
@@ -212,6 +213,43 @@ def main() -> int:
     for marker in ["create schema if not exists financecanvas_private", "security invoker", "connector_status", "initialize_workspace", "revoke all on function"]:
         if marker.lower() not in connector_bootstrap.lower():
             errors.append(f"Connector bootstrap migration missing security marker: {marker}")
+
+    schema_version_migration = text_of(ROOT / "supabase/migrations/20261002063500_financecanvas_v011_schema_version.sql")
+    package_version_match = re.search(r'"version"\s*:\s*"([^"]+)"', package_json)
+    skill_version_match = re.search(r'^\s*version:\s*"([^"]+)"\s*
+    for marker in REQUIRED_API_MARKERS:
+        if marker not in api:
+            errors.append(f"FinanceCanvas API missing required security marker: {marker}")
+    if 'npm:@supabase/supabase-js@2"' in api:
+        errors.append("FinanceCanvas API uses a floating Supabase JS major version instead of an exact reviewed version")
+
+    for rel in files:
+        if not rel.startswith("supabase/migrations/") or not rel.endswith(".sql"):
+            continue
+        content = text_of(ROOT / rel)
+        if re.search(r"\bgrant\b[\s\S]{0,200}\bto\s+(?:anon|authenticated)\b", content, re.I):
+            errors.append(f"Migration appears to grant direct client access: {rel}")
+
+    if errors:
+        print("FinanceCanvas security gate: FAILED", file=sys.stderr)
+        for e in errors:
+            print(f" - {e}", file=sys.stderr)
+        return 1
+
+    print("FinanceCanvas security gate: PASS")
+    print(f"Checked {len(files)} tracked files and required runtime guardrails.")
+    return 0
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+, skill, re.MULTILINE)
+    schema_version_match = re.search(r"schema_version\s*=\s*'([^']+)'", schema_version_migration)
+    if not (package_version_match and skill_version_match and schema_version_match):
+        errors.append("Unable to verify FinanceCanvas package/Skill/schema version alignment")
+    else:
+        versions = {package_version_match.group(1), skill_version_match.group(1), schema_version_match.group(1)}
+        if len(versions) != 1:
+            errors.append(f"FinanceCanvas version mismatch across package/Skill/schema: {sorted(versions)}")
 
     api = text_of(ROOT / "supabase/functions/financecanvas-api/index.ts")
     for marker in REQUIRED_API_MARKERS:
