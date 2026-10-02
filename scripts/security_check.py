@@ -58,6 +58,9 @@ REQUIRED_FILES = {
     "supabase/functions/financecanvas-api/index.ts",
     "supabase/migrations/20261002063000_financecanvas_v01_connector_bootstrap.sql",
     "supabase/migrations/20261002063500_financecanvas_v011_schema_version.sql",
+    "supabase/migrations/20261002071000_financecanvas_v011_connector_statement_import.sql",
+    "supabase/migrations/20261002072000_financecanvas_v012_connector_import_privacy.sql",
+    "supabase/migrations/20261002072500_financecanvas_v012_schema_version.sql",
 }
 
 FORBIDDEN_SUFFIXES = {
@@ -233,6 +236,10 @@ def main() -> int:
         "bring-your-own-Supabase",
         "financecanvas_private.connector_status",
         "financecanvas_private.initialize_workspace",
+        "financecanvas_private.ensure_account",
+        "financecanvas_private.preview_statement_import",
+        "financecanvas_private.commit_statement_import",
+        "Base64",
         "Never hardcode",
     ]:
         if marker.lower() not in connector_mode.lower():
@@ -256,8 +263,39 @@ def main() -> int:
                 f"Connector bootstrap migration missing security marker: {marker}"
             )
 
+    connector_import = text_of(
+        ROOT / "supabase/migrations/20261002071000_financecanvas_v011_connector_statement_import.sql"
+    )
+    for marker in [
+        "ensure_account",
+        "preview_statement_import",
+        "commit_statement_import",
+        "source_document_stored",
+        "financecanvas_commit_transaction_batch",
+        "duplicate_source_document",
+        "atomic_commit",
+    ]:
+        if marker.lower() not in connector_import.lower():
+            errors.append(
+                f"Connector statement import migration missing required marker: {marker}"
+            )
+
+    connector_privacy = text_of(
+        ROOT / "supabase/migrations/20261002072000_financecanvas_v012_connector_import_privacy.sql"
+    )
+    for marker in [
+        "luhn_valid",
+        "CRITICAL_SECRET_DETECTED",
+        "HIGH_RISK_IDENTIFIER_DETECTED",
+        "FULL_CARD_NUMBER_DETECTED",
+    ]:
+        if marker.lower() not in connector_privacy.lower():
+            errors.append(
+                f"Connector import privacy migration missing required marker: {marker}"
+            )
+
     schema_version_migration = text_of(
-        ROOT / "supabase/migrations/20261002063500_financecanvas_v011_schema_version.sql"
+        ROOT / "supabase/migrations/20261002072500_financecanvas_v012_schema_version.sql"
     )
     package_version_match = re.search(
         r'"version"\s*:\s*"([^"]+)"', package_json
