@@ -196,3 +196,11 @@ Never persist PAN, Aadhaar/VID, passport/tax identifiers, passwords, OTPs, or ot
 When a source SHA-256 is available, it must be lowercase 64-character hex and is used only as a non-reversible duplicate signal.
 
 Committed/completed imports with the same workspace + source hash must not be imported again without review.
+
+## Analysis completeness
+
+Every transaction import must retain sanitized narration, dates, amounts, currency, direction and available merchant/category context. Minimize identifiers inside narration while preserving its useful financial meaning. Do not discard all descriptions to avoid storing private data.
+
+After commit, use database rows for analysis. Check import readiness and unclassified coverage separately. Old incomplete batches require a controlled in-place repair with matched transaction IDs and final authorization, not another transaction import. The original source is only needed once for that repair.
+
+Structured entity documents retain their required entity/history fields through the corresponding controlled import path. They do not require bank-style merchant narration on records that are not transactions.

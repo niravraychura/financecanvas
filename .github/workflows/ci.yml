@@ -18,6 +18,10 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: "22"
+      - name: Install pinned test dependencies
+        run: npm ci
+      - name: Test migrations and import API
+        run: npm test
       - name: Validate Node installer
         run: node --check bin/install.mjs
       - name: Compile helper scripts

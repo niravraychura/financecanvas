@@ -190,3 +190,12 @@ Verified:
 - PAN-bearing test payload rejected with `HIGH_RISK_IDENTIFIER_DETECTED`.
 
 All synthetic entity/salary/tax workspaces and records were deleted after testing. The user's real workspace was not modified by the acceptance cleanup.
+
+## 0.1.5 source recovery and regression verification
+
+- `npm ci && npm test`: fresh replay of all 33 bundled migrations, transaction narration gates including CSV/XLS/API sources, duplicate protection, confirmation/privacy/workspace checks, atomic correction rollback, stale-preview detection, saved aliases, category preservation and npm/upload package completeness.
+- The isolated PGlite database stubs Supabase roles/auth/platform helpers and uses PostgreSQL core SHA-256 because PGlite does not ship pgcrypto. This is not a full Supabase-platform HTTP acceptance test.
+- Live connector smoke test: synthetic CSV import without narration rejected; narration retained with readiness; preview/confirmed clarification and alias reuse succeeded. Synthetic workspace/rows deleted; remaining synthetic workspaces: zero.
+- API v17 deployed ACTIVE; schema remains 0.1.5. No runtime keys created. Direct client table grants and private-routine EXECUTE grants remain zero; all FinanceCanvas public tables retain RLS. Source persistence and production_ready remain false.
+- Advisor review: informational RLS-without-policy notices are intentional with blocked direct client access; existing missing FK indexes/unused indexes remain performance backlog.
+- Local security review: PASS. GitHub CI and Agent Skill Install checks run on the release commit.

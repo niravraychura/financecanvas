@@ -52,3 +52,11 @@ Financial:
 - Fees, interest, taxes and forex markups should remain distinguishable from the underlying purchase.
 
 Custom categories are allowed. If a user rejects a spelling/normalization recommendation, preserve the chosen wording.
+
+## Permanent user clarifications
+
+Apply approved historical corrections using the preview/commit clarification workflow. Canonical merchant/category/subcategory/purpose live on transactions; transaction_clarifications preserve explanation; merchant_aliases and correction_memory retain reusable knowledge.
+
+Use transaction/month/date-range scope for context-specific meaning. For people who lend/borrow for varying purposes, normalize identity and remember relationship without globally assigning an IPO purpose. Do not turn a generic bank descriptor into a permanent merchant mapping based on one purchase.
+
+Preserve user-confirmed categories during later enrichment. Exclude internal/P2P lending transfers and card repayments from new spending; show investments and cash withdrawals separately when their final spending purpose is unknown.

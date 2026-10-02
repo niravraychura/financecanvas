@@ -5,7 +5,7 @@ license: Apache-2.0
 compatibility: Agent Skills compatible. Persistent mode requires an authorized Supabase connector or a configured FinanceCanvas API endpoint.
 metadata:
   author: niravraychura
-  version: "0.1.3"
+  version: "0.1.5"
   homepage: https://github.com/niravraychura/financecanvas
   category: personal-finance
 ---
@@ -29,6 +29,7 @@ Use these repository references when the task needs them:
 - `references/FINANCIAL_HEALTH_RULES.md` — evidence-based health metrics and presentation
 - `references/SCENARIO_RULES.md` — deterministic what-if assumptions, isolation and comparison
 - `references/CONNECTOR_MODE.md` — BYO Supabase discovery, connector bootstrap, project isolation and runtime rules
+- `references/UPGRADING.md` — reinstall vs database upgrade and live migration-history reconciliation
 
 If a reference conflicts with a stricter rule in this Skill, follow the stricter rule.
 
@@ -151,7 +152,7 @@ When an authorized Supabase connector exists:
 
 If the schema is missing and the user wants persistent mode, ask one concise confirmation to install FinanceCanvas. After confirmation, apply the bundled migrations in filename order to **that selected user's project** and run the required security checks.
 
-If the schema is already installed, call:
+If the schema is already installed, follow `references/UPGRADING.md` before applying any pending migrations. Never reset the database or replay all migrations during a Skill reinstall. Then call:
 
 `select financecanvas_private.connector_status();`
 
@@ -209,8 +210,8 @@ For every import:
 3. Identify likely owner/profile plus any account/institution/entity involved.
 4. Run the sensitive-data classification before persistence and warn/redact/reject as required.
 5. Extract only the minimum structured facts necessary for the user's stated purpose.
-6. Preserve meaningful raw text separately from normalized values only when it contains no prohibited secret or blocked identifier.
-7. Normalize merchant/category/entity labels.
+6. Retain sanitized transaction narration (`raw_description`) and the structured fields needed for database-only analysis. Never discard merchant context merely because it is private. Mask/remove identifiers inside the narration; do not store source bytes.
+7. Consult workspace merchant aliases and accepted correction memory before generic categorization. In connector mode call `financecanvas_private.apply_transaction_aliases` on transaction rows before preview and commit. Keep ambiguous categories as Needs Review with useful narration retained.
 8. Validate, reconcile where applicable, deduplicate, and score confidence.
 9. Route the import to the correct controlled preview:
    - **Transaction statements** (bank, credit-card, wallet, brokerage cash history, CSV/XLS transaction exports): API mode uses `preview_transaction_import`; connector mode uses `financecanvas_private.preview_statement_import`.
@@ -254,6 +255,16 @@ When the statement contains a running-balance column, extract `balance_after`. W
 
 After a successful import with enough transaction history, call `detect_recurring_patterns`. Present detected patterns as suggestions and ask before creating/updating recurring items or subscriptions.
 
+## Database-only analysis and permanent clarifications
+
+After a confirmed import, answer financial questions from the selected database. Do not reopen source PDFs/CSVs as the normal analysis path. Check import `analysis_ready` and report missing fields or unclassified coverage honestly. A one-time source reread is allowed only to repair an old incomplete import using the controlled repair path; update existing rows without duplicate imports. Readiness means useful data is retained, not that every merchant is confidently classified.
+
+When the user explains a merchant, person, transaction purpose or category, preview the affected database transaction IDs, then use `preview_transaction_clarifications` / `commit_transaction_clarifications` in API mode or their private connector equivalents. Persist the canonical transaction fields, clarification, appropriate aliases and correction memory atomically after the already-authorized final save. Do not claim the correction exists only in chat or invent a new confirmation when the user already approved the displayed changes.
+
+Save date-specific meaning only on the selected historical transactions. For people with varying purposes, remember identity/relationship without a global IPO/expense/income category. Do not map a generic bank descriptor globally to a particular travel agency. Preserve user-confirmed categories during later enrichment.
+
+For non-transaction documents, retain the appropriate structured entity/history fields; transaction narration and clarification operations are specific to transaction rows. Correct other records through request_edit/confirm_pending_operation or their controlled import conflict workflow.
+
 ## Statement reconciliation
 
 When statement totals are available, calculate reconciliation deterministically.
@@ -290,7 +301,7 @@ Show a field-by-field difference and ask:
 
 Update or Add-as-separate requires a reason. Never silently overwrite existing data.
 
-Outside an import, edits must use the request/confirm edit workflow.
+Outside an import, edits must use the request/confirm edit workflow or the dedicated preview/commit transaction-clarification workflow documented in `references/CONNECTOR_MODE.md`.
 
 During a connector-native structured-document import, an existing loan/policy/investment/income/asset/liability/subscription/goal/recurring/tax record may be updated only when:
 1. preview returned `changed_existing` with field-level differences;

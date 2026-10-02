@@ -104,6 +104,9 @@ REQUIRED_SKILL_PHRASES = [
     "financecanvas_private.preview_salary_document",
     "financecanvas_private.preview_tax_document",
     "Sensitive-data warning",
+    "preview_transaction_clarifications",
+    "Database-only analysis",
+    "references/UPGRADING.md",
 ]
 
 REQUIRED_API_MARKERS = [
@@ -135,6 +138,13 @@ REQUIRED_API_MARKERS = [
     "annual_fee_watch",
     "reconciliation_watch",
     "allocation_drift",
+    "preview_entity_import",
+    "commit_entity_import",
+    "preview_transaction_clarifications",
+    "commit_transaction_clarifications",
+    "ANALYSIS_DATA_INCOMPLETE",
+    "analysis_ready",
+    "applyStoredMerchantAliases",
 ]
 
 
@@ -345,9 +355,7 @@ def main() -> int:
                 f"Salary/tax import migration missing required marker: {marker}"
             )
 
-    schema_version_migration = text_of(
-        ROOT / "supabase/migrations/20261002084000_financecanvas_v013_privacy_constraints.sql"
-    )
+    schema_version_migration = "\n".join(text_of(p) for p in sorted((ROOT / "supabase/migrations").glob("*.sql")))
     package_version_match = re.search(
         r'"version"\s*:\s*"([^"]+)"', package_json
     )
@@ -356,10 +364,8 @@ def main() -> int:
         skill,
         re.MULTILINE,
     )
-    schema_version_match = re.search(
-        r"schema_version\s*=\s*'([^']+)'",
-        schema_version_migration,
-    )
+    schema_versions = list(re.finditer(r"schema_version\s*=\s*'([^']+)'", schema_version_migration))
+    schema_version_match = schema_versions[-1] if schema_versions else None
 
     if not (package_version_match and skill_version_match and schema_version_match):
         errors.append(

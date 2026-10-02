@@ -175,3 +175,18 @@ Tax imports persist minimized financial totals/status only. PAN/Aadhaar/passport
 All connector-native import functions live under `financecanvas_private` and are revoked from `anon` and `authenticated`.
 
 They require final confirmation before write operations and enforce source-hash/identifier privacy constraints at the database layer.
+
+## Database-first analysis and clarifications (0.1.5)
+
+Transaction operations:
+
+- `preview_transaction_repair` / `commit_transaction_repair`: match an old incomplete import to existing IDs; retain sanitized analysis fields without inserting duplicates. Commit requires `final_confirmation=true`.
+- `preview_transaction_clarifications` / `commit_transaction_clarifications`: payload contains `workspace_id`, `clarifications`, optional `aliases` and `memories`. Each clarification has `transaction_id`, `context_note`, optional canonical merchant/category/subcategory/purpose, and scope (`transaction`, `month`, `date_range`, `global`). Commit requires `final_confirmation=true` and atomically writes transaction fields, clarification, aliases, correction memory and audit entries.
+- `enrich_transactions`: operates on stored transaction descriptions using saved aliases and generic rules. Do not use overrides to bypass the user-clarification preview/confirmation path or recategorize confirmed classifications.
+- `search_transactions`: returns readiness warnings for incomplete imports. Readiness is independent of category coverage.
+
+All commits/enrichment require the write scope. Preview/read operations require read scope. Workspace-scoped keys remain enforced.
+
+Entity imports in API mode use `preview_entity_import` / `commit_entity_import`, with `workspace_id`, `import_id`, `entities` (`client_id`, `entity_type`, `data`) and optional resolutions. Supported types include insurance_policy, loan, investment, income_source, income_payment, asset, liability, subscription, goal, recurring_item, tax_record, insurance_premium, loan_payment and investment_transaction. Changed-record decisions are `keep_existing`, `update_existing`, `create_separate` plus a reason. The API adapter processes entity records sequentially; do not promise document-wide atomicity for this API operation. Connector structured-document commits are atomic.
+
+Exports include import_entities, income_payments, tax_records and transaction_clarifications. Normal transaction analysis reads canonical transaction fields; clarification/memory tables explain context.

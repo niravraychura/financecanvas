@@ -18,6 +18,10 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: "22"
+      - name: Install pinned test dependencies
+        run: npm ci
+      - name: Test install and migration bundles
+        run: npm test
       - name: Validate Agent Skills discovery
         run: npx -y skills add . --list
       - name: Validate installer syntax

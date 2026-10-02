@@ -39,3 +39,5 @@ Structured records such as `import_entities`, `income_payments` and minimized `t
 They contain structured facts/evidence links only and must not be used to retain reconstructable source-document contents.
 
 Source PDFs/images/spreadsheets remain temporary inputs and are not intentionally persisted in FinanceCanvas storage.
+
+Sanitized narration and merchant/category fields are necessary transaction data, not a source-document archive. User-confirmed transaction_clarifications, merchant_aliases and correction_memory are retained with the financial record until corrected/deleted or the workspace is erased. No personal examples belong in repository migrations or tests.

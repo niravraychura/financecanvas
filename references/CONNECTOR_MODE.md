@@ -420,3 +420,43 @@ Tax summary/return
 ```
 
 If one document contains both entity data and transaction rows, route each portion through its appropriate controlled importer rather than bypassing duplicate/confirmation rules.
+
+## Database-only analysis and persistent corrections (0.1.5)
+
+After importing, use scoped database rows for analysis. Check `imports.analysis_ready` and `analysis_missing_fields`. Retain sanitized `raw_description`; a statement cannot be committed without usable narration. Uncategorized rows are not the same as missing source information. Report unclassified totals rather than guessing.
+
+Before transaction preview/commit, resolve saved workspace aliases:
+
+```sql
+select financecanvas_private.apply_transaction_aliases('<workspace uuid>', <transaction rows jsonb>);
+```
+
+Use the returned rows for both preview and commit. Read accepted `correction_memory` for context. A name-only person alias does not authorize assigning a global IPO category. Existing user-confirmed classifications take precedence.
+
+For a user's merchant/category/purpose clarification, use:
+
+```sql
+select financecanvas_private.preview_transaction_clarifications(
+  '<workspace uuid>', <clarification rows jsonb>, <aliases jsonb>, <memories jsonb>
+);
+```
+
+Each row includes `transaction_id`, `context_note` and optional `merchant_normalized`, `category`, `subcategory`, `purpose`, `scope`, `effective_from`, `effective_to`. Preserve the statement narration. Use the preview's `expected_updated_at` on each row when committing to detect stale previews.
+
+After the user authorizes saving the shown corrections:
+
+```sql
+select financecanvas_private.commit_transaction_clarifications(
+  '<workspace uuid>', <clarification rows jsonb>, <aliases jsonb>, <memories jsonb>, true
+);
+```
+
+Alias entries have `raw_pattern`, `normalized_merchant`, optional category/subcategory/purpose. Memory entries have `correction_type`, `source_value`, `normalized_value`, optional `extra` context. Limit historical meaning to the selected transaction IDs; only reusable, explicitly approved meaning belongs in a global alias.
+
+These private owner routines validate workspace membership and privacy, preserve confirmation, update transaction fields plus explanation/memory, and write an audit record atomically. They are revoked from PUBLIC/anon/authenticated. Do not substitute direct UPDATEs. Encode untrusted JSON using the Base64 transport described above.
+
+For old incomplete imports, source rereading is a one-time repair operation, not the normal analysis route. Approved maintenance may use `financecanvas_repair_transaction_analysis_batch` after matching exact stored transaction IDs and showing a preview with final user authorization. Direction repair is maintenance-only and must validate dates/amounts/old direction against statement balances; do not expose its internal RPC as an ordinary edit shortcut.
+
+Other entity records use their controlled import-conflict workflow or API request_edit/confirm_pending_operation. Transaction clarification is not a generic insurance/loan/tax correction API.
+
+See `UPGRADING.md` before installing updates into an existing database. Never replay all migrations simply because the Skill was reinstalled.

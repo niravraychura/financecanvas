@@ -5,10 +5,10 @@ const cors = {
   "access-control-allow-headers": "authorization, content-type",
   "access-control-allow-methods": "POST, OPTIONS",
 };
-const editable = new Set(["workspaces","profiles","institutions","accounts","transactions","merchant_aliases","loans","insurance_policies","assets","liabilities","investments","subscriptions","goals","watch_rules","data_freshness","households","household_members","profile_relationships","asset_owners","liability_owners","loan_borrowers","account_balances","credit_card_statements","budgets","recurring_items","financial_snapshots","imports","extracted_fields","confirmation_queue","income_sources","insurance_premiums","financial_preferences","recommendations","investment_allocation_targets"]);
-const deletable = new Set(["profiles","institutions","accounts","transactions","merchant_aliases","loans","insurance_policies","assets","liabilities","investments","subscriptions","goals","watch_rules","households","household_members","profile_relationships","asset_owners","liability_owners","loan_borrowers","account_balances","credit_card_statements","budgets","recurring_items","financial_snapshots","imports","extracted_fields","confirmation_queue","income_sources","insurance_premiums","financial_preferences","recommendations","investment_allocation_targets"]);
-const genericCreate = new Set(["institutions","account_owners","transaction_splits","merchant_aliases","loans","loan_payments","insurance_policies","assets","liabilities","investments","investment_transactions","subscriptions","goals","correction_memory","data_freshness","processing_consents","sensitive_data_events","privacy_requests","breach_incidents","households","household_members","profile_relationships","asset_owners","liability_owners","loan_borrowers","account_balances","credit_card_statements","budgets","recurring_items","financial_snapshots","imports","extracted_fields","confirmation_queue","income_sources","insurance_premiums","financial_preferences","recommendations","investment_allocation_targets"]);
-const genericList = new Set(["institutions","account_owners","transaction_splits","merchant_aliases","loans","loan_payments","insurance_policies","assets","liabilities","investments","investment_transactions","subscriptions","goals","correction_memory","duplicate_reviews","audit_log","watch_rules","watch_findings","data_freshness","processing_consents","sensitive_data_events","privacy_requests","breach_incidents","security_events","households","household_members","profile_relationships","asset_owners","liability_owners","loan_borrowers","account_balances","credit_card_statements","budgets","recurring_items","financial_snapshots","imports","extracted_fields","confirmation_queue","income_sources","insurance_premiums","financial_preferences","recommendations","investment_allocation_targets"]);
+const editable = new Set(["workspaces","profiles","institutions","accounts","transactions","merchant_aliases","loans","insurance_policies","assets","liabilities","investments","subscriptions","goals","watch_rules","data_freshness","households","household_members","profile_relationships","asset_owners","liability_owners","loan_borrowers","account_balances","credit_card_statements","budgets","recurring_items","financial_snapshots","imports","extracted_fields","confirmation_queue","income_sources","insurance_premiums","financial_preferences","recommendations","investment_allocation_targets","import_entities","income_payments","tax_records","transaction_clarifications"]);
+const deletable = new Set(["profiles","institutions","accounts","transactions","merchant_aliases","loans","insurance_policies","assets","liabilities","investments","subscriptions","goals","watch_rules","households","household_members","profile_relationships","asset_owners","liability_owners","loan_borrowers","account_balances","credit_card_statements","budgets","recurring_items","financial_snapshots","imports","extracted_fields","confirmation_queue","income_sources","insurance_premiums","financial_preferences","recommendations","investment_allocation_targets","import_entities","income_payments","tax_records","transaction_clarifications"]);
+const genericCreate = new Set(["institutions","account_owners","transaction_splits","merchant_aliases","loans","loan_payments","insurance_policies","assets","liabilities","investments","investment_transactions","subscriptions","goals","correction_memory","data_freshness","processing_consents","sensitive_data_events","privacy_requests","breach_incidents","households","household_members","profile_relationships","asset_owners","liability_owners","loan_borrowers","account_balances","credit_card_statements","budgets","recurring_items","financial_snapshots","imports","extracted_fields","confirmation_queue","income_sources","insurance_premiums","financial_preferences","recommendations","investment_allocation_targets","import_entities","income_payments","tax_records","transaction_clarifications"]);
+const genericList = new Set(["institutions","account_owners","transaction_splits","merchant_aliases","loans","loan_payments","insurance_policies","assets","liabilities","investments","investment_transactions","subscriptions","goals","correction_memory","duplicate_reviews","audit_log","watch_rules","watch_findings","data_freshness","processing_consents","sensitive_data_events","privacy_requests","breach_incidents","security_events","households","household_members","profile_relationships","asset_owners","liability_owners","loan_borrowers","account_balances","credit_card_statements","budgets","recurring_items","financial_snapshots","imports","extracted_fields","confirmation_queue","income_sources","insurance_premiums","financial_preferences","recommendations","investment_allocation_targets","import_entities","income_payments","tax_records","transaction_clarifications"]);
 
 function respond(body: unknown, status=200) {
   return new Response(JSON.stringify(body), {status, headers:{...cors,"content-type":"application/json; charset=utf-8"}});
@@ -112,7 +112,7 @@ function requiredScope(op:string){
   if(["create_api_key","revoke_api_key"].includes(op)) return "admin";
   if(["export_workspace_json","export_workspace_csv"].includes(op)) return "export";
   if(["create_watch_rule","run_watch_checks"].includes(op)) return "watch";
-  if(["initialize_workspace","create_profile","create_account","create_record","commit_transactions","request_edit","request_delete","confirm_pending_operation","request_workspace_erasure","confirm_workspace_erasure","upsert_financial_preference","record_recommendation"].includes(op)) return "write";
+  if(["initialize_workspace","create_profile","create_account","create_record","commit_transactions","commit_entity_import","commit_transaction_repair","commit_transaction_clarifications","enrich_transactions","request_edit","request_delete","confirm_pending_operation","request_workspace_erasure","confirm_workspace_erasure","upsert_financial_preference","record_recommendation"].includes(op)) return "write";
   return "read";
 }
 function csvEscape(v:any){
@@ -178,6 +178,172 @@ async function nearMatches(db:any, ws:string, t:Record<string,any>) {
     .gte("posted_date",lo.toISOString().slice(0,10)).lte("posted_date",hi.toISOString().slice(0,10)).is("deleted_at",null).limit(20);
   if(error) throw error;
   return (data??[]).filter((x:any)=>sim(x.merchant_normalized??x.raw_description,t.merchant_normalized??t.raw_description)>=0.5);
+}
+
+
+function isStatementLikeImport(i:any){
+  const s=norm((i?.detected_document_type??"")+" "+(i?.source_type??""));
+  return /(statement|transaction history|transaction_history|bank|credit.?card|overdraft|wallet|brokerage)/i.test(s);
+}
+async function importMapForRows(db:any,ws:string,rows:any[]){
+  const ids=[...new Set(rows.map((x:any)=>x.import_id).filter(Boolean).map(String))];
+  if(!ids.length)return new Map<string,any>();
+  const r=await db.from("imports")
+    .select("id,source_type,detected_document_type,analysis_ready,analysis_missing_fields")
+    .eq("workspace_id",ws).in("id",ids).is("deleted_at",null);
+  if(r.error)throw r.error;
+  return new Map((r.data??[]).map((x:any)=>[String(x.id),x]));
+}
+async function validateStatementNarrations(db:any,ws:string,rows:any[]){
+  const m=await importMapForRows(db,ws,rows);
+  const missing:any[]=[];
+  for(const row of rows){
+    const imp=row.import_id?m.get(String(row.import_id)):null;
+    if(imp&&!String(row.raw_description??"").trim()){
+      missing.push({client_id:row.client_id??null,import_id:row.import_id,posted_date:row.posted_date??null,amount:row.amount??null,direction:row.direction??null});
+    }
+  }
+  if(missing.length){
+    const e:any=new Error("Statement imports must retain sanitized transaction narration/raw_description so FinanceCanvas can analyze categories from the database without rereading the source PDF.");
+    e.status=422;e.code="ANALYSIS_DATA_INCOMPLETE";
+    e.details={missing_description_count:missing.length,examples:missing.slice(0,20)};
+    throw e;
+  }
+  return m;
+}
+
+async function loadMerchantAliases(db:any,ws:string){
+  const r=await db.from("merchant_aliases")
+    .select("raw_pattern,normalized_merchant,category,subcategory,purpose,confirmed_by_user")
+    .eq("workspace_id",ws).is("deleted_at",null).eq("confirmed_by_user",true);
+  if(r.error)throw r.error;
+  return r.data??[];
+}
+function applyStoredMerchantAliases(src:any,aliases:any[]){
+  const t={...src};
+  const hay=norm((t.raw_description??"")+" "+(t.merchant_normalized??""));
+  if(!hay)return t;
+  let best:any=null,bestLen=-1;
+  for(const a of aliases??[]){
+    const pat=norm(a.raw_pattern??"");
+    if(pat&&hay.includes(pat)&&pat.length>bestLen){best=a;bestLen=pat.length;}
+  }
+  if(!best)return t;
+  t.merchant_normalized=best.normalized_merchant??t.merchant_normalized;
+  if(!String(t.category??"").trim()&&best.category)t.category=best.category;
+  if(!String(t.subcategory??"").trim()&&best.subcategory)t.subcategory=best.subcategory;
+  if(!String(t.purpose??"").trim()&&best.purpose)t.purpose=best.purpose;
+  const nv=(t.normalized_values&&typeof t.normalized_values==="object"&&!Array.isArray(t.normalized_values))?{...t.normalized_values}:{};
+  nv.financecanvas_alias={
+    ...(nv.financecanvas_alias??{}),
+    matched_pattern:best.raw_pattern,
+    normalized_merchant:best.normalized_merchant,
+    confirmed_by_user:true
+  };
+  t.normalized_values=nv;
+  return t;
+}
+
+function autoEnrichTransaction(src:any){
+  const t={...src};
+  const d=String(t.raw_description??"").trim();
+  if(!d)return t;
+  const s=d.toLowerCase();
+
+  if(!String(t.merchant_normalized??"").trim()){
+    const merchants:[RegExp,string][]=[
+      [/\bshell\b/i,"Shell"],[/\bamazon\b/i,"Amazon"],[/\bflipkart\b/i,"Flipkart"],
+      [/\bmyntra\b/i,"Myntra"],[/\bswiggy\b/i,"Swiggy"],[/\bzomato\b/i,"Zomato"],
+      [/\birctc\b/i,"IRCTC"],[/\bgoibibo\b/i,"Goibibo"],[/\babhibus\b/i,"AbhiBus"],
+      [/\bgsrtc\b/i,"GSRTC"],[/\bopenai\b|\bchatgpt\b/i,"OpenAI / ChatGPT"],
+      [/\bcursor\b/i,"Cursor"],[/\bnetflix\b/i,"Netflix"],[/\bspotify\b/i,"Spotify"],
+      [/\bdmart\b/i,"DMart"],[/\bblinkit\b/i,"Blinkit"],[/\bzepto\b/i,"Zepto"],
+      [/\binstamart\b/i,"Instamart"],[/\bapollo\b/i,"Apollo"],[/\bmedplus\b/i,"MedPlus"]
+    ];
+    for(const [re,name] of merchants){if(re.test(d)){t.merchant_normalized=name;break;}}
+  }
+
+  if(!String(t.category??"").trim()){
+    const credit=String(t.direction??"")==="credit";
+    if(credit&&/\b(salary|payroll|salary credit)\b/i.test(s)){t.category="Income";t.subcategory=t.subcategory??"Salary";}
+    else if(/\b(refund|reversal|chargeback|reversed)\b/i.test(s)){t.category="Refunds";t.subcategory=t.subcategory??"Refund / Reversal";}
+    else if(/\b(annual fee|late fee|finance charge|forex|markup|service charge|sms charge|bank charge|charges|gst)\b/i.test(s)){t.category="Fees & Charges";}
+    else if(/\b(atm|cash withdrawal|cash wdl)\b/i.test(s)){t.category="Cash";t.subcategory=t.subcategory??"ATM Withdrawal";}
+    else if(/\b(shell|petrol|diesel|fuel|indian oil|iocl|hpcl|bpcl)\b/i.test(s)){t.category="Fuel";}
+    else if(/\b(swiggy|zomato|restaurant|cafe|coffee|food)\b/i.test(s)){t.category="Food & Dining";}
+    else if(/\b(dmart|grocery|grocer|blinkit|zepto|instamart|supermarket|reliance fresh)\b/i.test(s)){t.category="Groceries";}
+    else if(/\b(irctc|gsrtc|abhibus|redbus|goibibo|makemytrip|airlines?|flight|hotel|uber|ola)\b/i.test(s)){t.category="Travel & Transport";}
+    else if(/\b(amazon|flipkart|myntra|ajio|shopping|retail)\b/i.test(s)){t.category="Shopping";}
+    else if(/\b(openai|chatgpt|cursor|netflix|spotify|youtube premium|subscription)\b/i.test(s)){t.category="Subscriptions";}
+    else if(/\b(insurance|lic|bajaj general|premium)\b/i.test(s)){t.category="Insurance";}
+    else if(/\b(hospital|clinic|pharmacy|medical|apollo|medplus|doctor)\b/i.test(s)){t.category="Healthcare";}
+    else if(/\b(electricity|gas bill|water bill|broadband|internet|mobile recharge|telecom)\b/i.test(s)){t.category="Utilities";}
+    else if(/\b(credit card payment|card payment|cc payment)\b/i.test(s)){t.category="Credit Card Payment";}
+    else if(/\b(self transfer|own account|own a\/c|internal transfer)\b/i.test(s)){t.category="Transfers";t.subcategory=t.subcategory??"Self Transfer";}
+  }
+
+  const nv=(t.normalized_values&&typeof t.normalized_values==="object"&&!Array.isArray(t.normalized_values))?{...t.normalized_values}:{};
+  nv.financecanvas_analysis={
+    ...(nv.financecanvas_analysis??{}),
+    description_retained:true,
+    merchant_source:String(src.merchant_normalized??"").trim()?"source":(t.merchant_normalized?"rule":null),
+    category_source:String(src.category??"").trim()?"source":(t.category?"rule":null)
+  };
+  t.normalized_values=nv;
+  return t;
+}
+
+const importEntityConfig:Record<string,{table:string,identity:string[],softDelete?:boolean}> = {
+  insurance_policy:{table:"insurance_policies",identity:["profile_id","policy_identifier_last4","policy_name","policy_type","institution_id"],softDelete:true},
+  loan:{table:"loans",identity:["profile_id","identifier_last4","name","loan_type","institution_id"],softDelete:true},
+  investment:{table:"investments",identity:["profile_id","account_id","symbol","name","investment_type"],softDelete:true},
+  income_source:{table:"income_sources",identity:["profile_id","account_id","name","income_type"],softDelete:true},
+  income_payment:{table:"income_payments",identity:["income_source_id","payment_date","period_end","net_amount","gross_amount"]},
+  asset:{table:"assets",identity:["profile_id","name","asset_type"],softDelete:true},
+  liability:{table:"liabilities",identity:["profile_id","name","liability_type"],softDelete:true},
+  subscription:{table:"subscriptions",identity:["profile_id","merchant_name","currency"],softDelete:true},
+  goal:{table:"goals",identity:["profile_id","name","goal_type"],softDelete:true},
+  recurring_item:{table:"recurring_items",identity:["profile_id","account_id","item_type","name","merchant_name"],softDelete:true},
+  tax_record:{table:"tax_records",identity:["profile_id","jurisdiction","tax_year","form_type"],softDelete:true},
+  insurance_premium:{table:"insurance_premiums",identity:["policy_id","premium_date","amount","currency"]},
+  loan_payment:{table:"loan_payments",identity:["loan_id","payment_date","amount"]},
+  investment_transaction:{table:"investment_transactions",identity:["investment_id","event_type","event_date","amount","quantity"]}
+};
+function entityDiff(existing:Record<string,any>,incoming:Record<string,any>){
+  const out:Record<string,any>={};
+  for(const [k,v] of Object.entries(incoming)){
+    if(["id","workspace_id","created_at","updated_at","deleted_at","client_id","import_id","parent_entity_id"].includes(k))continue;
+    if(JSON.stringify(existing[k]??null)!==JSON.stringify(v??null))out[k]={existing:existing[k]??null,incoming:v??null};
+  }
+  return out;
+}
+function entityIdentityFields(type:string,row:Record<string,any>){
+  const cfg=importEntityConfig[type]; if(!cfg)return [];
+  let keys=cfg.identity.filter(k=>row[k]!==undefined&&row[k]!==null&&String(row[k])!=="");
+  if(type==="insurance_policy"&&row.policy_identifier_last4)keys=["profile_id","policy_identifier_last4"].filter(k=>row[k]);
+  if(type==="loan"&&row.identifier_last4)keys=["profile_id","identifier_last4"].filter(k=>row[k]);
+  if(type==="investment"&&row.symbol)keys=["profile_id","account_id","symbol"].filter(k=>row[k]);
+  if(type==="income_payment")keys=["income_source_id",row.payment_date?"payment_date":"period_end"].filter(k=>typeof k==="string"&&row[k as string]);
+  return keys;
+}
+async function findEntityCandidate(db:any,ws:string,type:string,row:Record<string,any>){
+  const cfg=importEntityConfig[type]; if(!cfg)throw Object.assign(new Error("Unsupported entity_type: "+type),{status:422,code:"UNSUPPORTED_ENTITY_TYPE"});
+  const keys=entityIdentityFields(type,row);
+  if(!keys.length)return null;
+  let q=db.from(cfg.table).select("*").eq("workspace_id",ws);
+  if(cfg.softDelete)q=q.is("deleted_at",null);
+  for(const k of keys)q=q.eq(k,row[k]);
+  const r=await q.limit(2); if(r.error)throw r.error;
+  return r.data?.[0]??null;
+}
+async function validateImportEntityRefs(db:any,type:string,row:any,ws:string){
+  const cfg=importEntityConfig[type]; if(!cfg)throw Object.assign(new Error("Unsupported entity_type: "+type),{status:422});
+  await validateGenericRefs(db,cfg.table,row,ws);
+  if(type==="income_payment"){await assertIdsInWorkspace(db,"income_sources",[row.income_source_id],ws);await assertIdsInWorkspace(db,"transactions",[row.transaction_id],ws);await assertIdsInWorkspace(db,"imports",[row.import_id],ws);}
+  if(type==="tax_record")await assertIdsInWorkspace(db,"profiles",[row.profile_id],ws);
+  if(type==="investment_transaction"){await assertIdsInWorkspace(db,"investments",[row.investment_id],ws);await assertIdsInWorkspace(db,"transactions",[row.transaction_id],ws);}
+  if(type==="loan_payment"){await assertIdsInWorkspace(db,"loans",[row.loan_id],ws);await assertIdsInWorkspace(db,"transactions",[row.transaction_id],ws);}
+  if(type==="insurance_premium"){await assertIdsInWorkspace(db,"insurance_policies",[row.policy_id],ws);await assertIdsInWorkspace(db,"transactions",[row.transaction_id],ws);}
 }
 
 Deno.serve(async(req:Request)=>{
@@ -295,34 +461,46 @@ Deno.serve(async(req:Request)=>{
     }
     if(op==="preview_transaction_import"){
       reqFields(p,["workspace_id","transactions"]);const results=[];
-      const previewRows=p.transactions as Record<string,any>[];
-      await assertIdsInWorkspace(db,"accounts",previewRows.map(x=>x.account_id),p.workspace_id);
-      await assertIdsInWorkspace(db,"profiles",previewRows.map(x=>x.profile_id),p.workspace_id);
-      await assertIdsInWorkspace(db,"imports",previewRows.map(x=>x.import_id),p.workspace_id);
-      for(const src of previewRows){
-        const t={...src,workspace_id:p.workspace_id};reqFields(t,["account_id","posted_date","amount","direction"]);const base=await fp(t);
-        const ex=await db.from("transactions").select("*").eq("workspace_id",p.workspace_id).eq("base_fingerprint",base).is("deleted_at",null).limit(1);if(ex.error)throw ex.error;
-        if(ex.data?.length){results.push({client_id:src.client_id??null,status:"exact_duplicate",base_fingerprint:base,existing:ex.data[0],difference:differences(ex.data[0],t)});continue}
+      const previewRowsRaw=p.transactions as Record<string,any>[];
+      await assertIdsInWorkspace(db,"accounts",previewRowsRaw.map(x=>x.account_id),p.workspace_id);
+      await assertIdsInWorkspace(db,"profiles",previewRowsRaw.map(x=>x.profile_id),p.workspace_id);
+      await assertIdsInWorkspace(db,"imports",previewRowsRaw.map(x=>x.import_id),p.workspace_id);
+      await validateStatementNarrations(db,p.workspace_id,previewRowsRaw);
+      const storedAliases=await loadMerchantAliases(db,p.workspace_id);
+      for(const rawRow of previewRowsRaw){
+        const srcRow=autoEnrichTransaction(applyStoredMerchantAliases(rawRow,storedAliases));
+        const t={...srcRow,workspace_id:p.workspace_id};
+        reqFields(t,["account_id","posted_date","amount","direction"]);
+        const base=await fp(t);
+        const ex=await db.from("transactions").select("*").eq("workspace_id",p.workspace_id).eq("base_fingerprint",base).is("deleted_at",null).limit(1);
+        if(ex.error)throw ex.error;
+        if(ex.data?.length){
+          results.push({client_id:srcRow.client_id??null,status:"exact_duplicate",base_fingerprint:base,existing:ex.data[0],difference:differences(ex.data[0],t),analysis_fields:{raw_description:t.raw_description??null,merchant_normalized:t.merchant_normalized??null,category:t.category??null,subcategory:t.subcategory??null}});
+          continue;
+        }
         const near=await nearMatches(db,p.workspace_id,t);
-        if(near.length)results.push({client_id:src.client_id??null,status:"near_duplicate",base_fingerprint:base,matches:near.map((x:any)=>({existing:x,difference:differences(x,t)}))});
-        else results.push({client_id:src.client_id??null,status:"ready",base_fingerprint:base});
+        if(near.length)results.push({client_id:srcRow.client_id??null,status:"near_duplicate",base_fingerprint:base,matches:near.map((x:any)=>({existing:x,difference:differences(x,t)})),analysis_fields:{raw_description:t.raw_description??null,merchant_normalized:t.merchant_normalized??null,category:t.category??null,subcategory:t.subcategory??null}});
+        else results.push({client_id:srcRow.client_id??null,status:"ready",base_fingerprint:base,analysis_fields:{raw_description:t.raw_description??null,merchant_normalized:t.merchant_normalized??null,category:t.category??null,subcategory:t.subcategory??null}});
       }
-      return respond({results});
+      return respond({results,analysis_contract:{database_first:true,statement_descriptions_required:true,original_document_required_after_commit:false}});
     }
     if(op==="commit_transactions"){
       reqFields(p,["workspace_id","transactions","final_confirmation"]);
       if(p.final_confirmation!==true)return respond({error:"Final user confirmation is required before commit."},409);
 
       const resolutions=new Map((p.duplicate_resolutions??[]).map((r:any)=>[String(r.client_id),r]));
-      const commitRows=p.transactions as Record<string,any>[];
-      await assertIdsInWorkspace(db,"accounts",commitRows.map(x=>x.account_id),p.workspace_id);
-      await assertIdsInWorkspace(db,"profiles",commitRows.map(x=>x.profile_id),p.workspace_id);
-      await assertIdsInWorkspace(db,"imports",commitRows.map(x=>x.import_id),p.workspace_id);
+      const commitRowsRaw=p.transactions as Record<string,any>[];
+      await assertIdsInWorkspace(db,"accounts",commitRowsRaw.map(x=>x.account_id),p.workspace_id);
+      await assertIdsInWorkspace(db,"profiles",commitRowsRaw.map(x=>x.profile_id),p.workspace_id);
+      await assertIdsInWorkspace(db,"imports",commitRowsRaw.map(x=>x.import_id),p.workspace_id);
+      await validateStatementNarrations(db,p.workspace_id,commitRowsRaw);
+      const storedAliases=await loadMerchantAliases(db,p.workspace_id);
+      const commitRows=commitRowsRaw.map((x:any)=>autoEnrichTransaction(applyStoredMerchantAliases(x,storedAliases)));
 
       const prepared:any[]=[],reviews:any[]=[],skipped:any[]=[],conflicts:any[]=[];
 
-      for(const src of commitRows){
-        const t={...src,workspace_id:p.workspace_id}, client=String(src.client_id??"");
+      for(const srcRow of commitRows){
+        const t={...srcRow,workspace_id:p.workspace_id}, client=String(srcRow.client_id??"");
         reqFields(t,["account_id","posted_date","amount","direction"]);
         const base=await fp(t);
         const ex=await db.from("transactions").select("*").eq("workspace_id",p.workspace_id).eq("base_fingerprint",base).is("deleted_at",null).limit(1);
@@ -405,12 +583,205 @@ Deno.serve(async(req:Request)=>{
         const q=await db.from("transactions").select("*").eq("workspace_id",p.workspace_id).in("id",ids);
         if(q.error)throw q.error; inserted=q.data??[];
       }
-      return respond({inserted,skipped,conflicts:[],atomic_commit:true,batch_result:rpc.data});
+      const importIds=[...new Set(prepared.map((x:any)=>x.import_id).filter(Boolean))];
+      let importReadiness:any[]=[];
+      if(importIds.length){
+        const ir=await db.from("imports").select("id,analysis_ready,analysis_missing_fields,analysis_ready_at,status,record_count").eq("workspace_id",p.workspace_id).in("id",importIds);
+        if(ir.error)throw ir.error; importReadiness=ir.data??[];
+      }
+      return respond({inserted,skipped,conflicts:[],atomic_commit:true,batch_result:rpc.data,import_readiness:importReadiness,database_first_analysis:true});
+    }
+
+    if(op==="preview_entity_import"){
+      reqFields(p,["workspace_id","import_id","entities"]);
+      await assertIdsInWorkspace(db,"imports",[p.import_id],p.workspace_id);
+      const results:any[]=[];
+      for(const item of p.entities as any[]){
+        const type=String(item.entity_type??"");
+        const row={...(item.data??{}),workspace_id:p.workspace_id};
+        if(type==="income_payment"&&!row.import_id)row.import_id=p.import_id;
+        await validateImportEntityRefs(db,type,row,p.workspace_id);
+        const existing=await findEntityCandidate(db,p.workspace_id,type,row);
+        if(!existing){results.push({client_id:item.client_id??null,entity_type:type,status:"ready",incoming:row});continue;}
+        const difference=entityDiff(existing,row);
+        if(Object.keys(difference).length===0)results.push({client_id:item.client_id??null,entity_type:type,status:"exact_duplicate",existing,difference:{}});
+        else results.push({client_id:item.client_id??null,entity_type:type,status:"changed_record",existing,difference,resolution_required:true,allowed_resolutions:["keep_existing","update_existing","create_separate"]});
+      }
+      return respond({import_id:p.import_id,results,final_confirmation_required:true});
+    }
+    if(op==="commit_entity_import"){
+      reqFields(p,["workspace_id","import_id","entities","final_confirmation"]);
+      if(p.final_confirmation!==true)return respond({error:"Final user confirmation is required before commit."},409);
+      await assertIdsInWorkspace(db,"imports",[p.import_id],p.workspace_id);
+      const resolutions=new Map((p.resolutions??[]).map((r:any)=>[String(r.client_id),r]));
+      const outcomes:any[]=[];
+      for(const item of p.entities as any[]){
+        const type=String(item.entity_type??"");
+        const cfg=importEntityConfig[type];
+        if(!cfg)throw Object.assign(new Error("Unsupported entity_type: "+type),{status:422,code:"UNSUPPORTED_ENTITY_TYPE"});
+        const row={...(item.data??{}),workspace_id:p.workspace_id};
+        delete row.id; delete row.created_at; delete row.updated_at; delete row.deleted_at;
+        if(type==="income_payment"&&!row.import_id)row.import_id=p.import_id;
+        await validateImportEntityRefs(db,type,row,p.workspace_id);
+        const existing=await findEntityCandidate(db,p.workspace_id,type,row);
+        const client=String(item.client_id??"");
+        let action="",entity:any=null,reason:string|null=null;
+        if(existing){
+          const difference=entityDiff(existing,row);
+          if(Object.keys(difference).length===0){
+            action="skipped_duplicate";entity=existing;
+          }else{
+            const res=resolutions.get(client);
+            if(!res||!["keep_existing","update_existing","create_separate"].includes(String(res.decision))||!String(res.reason??"").trim()){
+              return respond({error:"Changed record requires keep_existing, update_existing, or create_separate plus a reason.",client_id:item.client_id??null,entity_type:type,existing,difference},409);
+            }
+            reason=String(res.reason).trim();
+            if(res.decision==="keep_existing"){action="reused";entity=existing;}
+            if(res.decision==="update_existing"){
+              const u=await db.from(cfg.table).update(row).eq("workspace_id",p.workspace_id).eq("id",existing.id).select().single();
+              if(u.error)throw u.error; action="updated";entity=u.data;
+            }
+            if(res.decision==="create_separate"){
+              const ins=await db.from(cfg.table).insert(row).select().single();
+              if(ins.error)throw ins.error; action="added_duplicate";entity=ins.data;
+            }
+          }
+        }else{
+          const ins=await db.from(cfg.table).insert(row).select().single();
+          if(ins.error)throw ins.error; action="created";entity=ins.data;
+        }
+        const link=await db.from("import_entities").insert({
+          workspace_id:p.workspace_id,import_id:p.import_id,entity_type:type,entity_id:entity.id,
+          parent_entity_id:item.parent_entity_id??null,client_id:item.client_id??null,action,reason
+        }).select().single();
+        if(link.error)throw link.error;
+        outcomes.push({client_id:item.client_id??null,entity_type:type,action,entity,import_entity:link.data});
+      }
+      const upd=await db.from("imports").update({status:"completed",record_count:outcomes.length,completed_at:new Date().toISOString(),committed_at:new Date().toISOString(),analysis_ready:true,analysis_missing_fields:[],analysis_ready_at:new Date().toISOString()}).eq("workspace_id",p.workspace_id).eq("id",p.import_id);
+      if(upd.error)throw upd.error;
+      return respond({import_id:p.import_id,committed:true,outcomes});
+    }
+
+    if(op==="preview_transaction_repair"){
+      reqFields(p,["workspace_id","import_id","transactions"]);
+      await assertIdsInWorkspace(db,"imports",[p.import_id],p.workspace_id);
+      const existingQ=await db.from("transactions").select("*").eq("workspace_id",p.workspace_id).eq("import_id",p.import_id).is("deleted_at",null).limit(5000);
+      if(existingQ.error)throw existingQ.error;
+      const existing=existingQ.data??[], results:any[]=[];
+      for(const rawRow of p.transactions as any[]){
+        const row=autoEnrichTransaction(rawRow);
+        let candidates=existing;
+        if(row.transaction_id)candidates=candidates.filter((x:any)=>String(x.id)===String(row.transaction_id));
+        else if(row.transaction_reference!==undefined&&row.transaction_reference!==null&&String(row.transaction_reference)!=="")candidates=candidates.filter((x:any)=>String(x.transaction_reference??"")===String(row.transaction_reference));
+        else if(row.source_sequence!==undefined&&row.source_sequence!==null)candidates=candidates.filter((x:any)=>Number(x.source_sequence)===Number(row.source_sequence));
+        if(row.posted_date)candidates=candidates.filter((x:any)=>String(x.posted_date)===String(row.posted_date));
+        if(row.amount!==undefined&&row.amount!==null)candidates=candidates.filter((x:any)=>Number(x.amount)===Number(row.amount));
+        if(row.direction)candidates=candidates.filter((x:any)=>String(x.direction)===String(row.direction));
+        if(candidates.length===1){
+          const x=candidates[0];
+          results.push({client_id:row.client_id??null,status:"ready",transaction_id:x.id,existing:{posted_date:x.posted_date,amount:x.amount,direction:x.direction,transaction_reference:x.transaction_reference,raw_description:x.raw_description,merchant_normalized:x.merchant_normalized,category:x.category,subcategory:x.subcategory},proposed:{raw_description:row.raw_description??null,merchant_normalized:row.merchant_normalized??null,category:row.category??null,subcategory:row.subcategory??null,purpose:row.purpose??null,confidence:row.confidence??null,normalized_values:row.normalized_values??{}}});
+        }else{
+          results.push({client_id:row.client_id??null,status:candidates.length?"ambiguous":"not_found",candidate_count:candidates.length});
+        }
+      }
+      return respond({import_id:p.import_id,results,repairable:results.every((x:any)=>x.status==="ready"),final_confirmation_required:true});
+    }
+    if(op==="commit_transaction_repair"){
+      reqFields(p,["workspace_id","import_id","transactions","final_confirmation"]);
+      if(p.final_confirmation!==true)return respond({error:"Final user confirmation is required before repair commit."},409);
+      await assertIdsInWorkspace(db,"imports",[p.import_id],p.workspace_id);
+      const rows=(p.transactions as any[]).map((x:any)=>autoEnrichTransaction(x));
+      for(const x of rows){
+        reqFields(x,["transaction_id","raw_description"]);
+      }
+      const rpc=await db.rpc("financecanvas_repair_transaction_analysis_batch",{p_workspace_id:p.workspace_id,p_import_id:p.import_id,p_rows:rows});
+      if(rpc.error)throw rpc.error;
+      const ir=await db.from("imports").select("id,analysis_ready,analysis_missing_fields,analysis_ready_at,status,record_count").eq("workspace_id",p.workspace_id).eq("id",p.import_id).single();
+      if(ir.error)throw ir.error;
+      return respond({repaired:true,batch_result:rpc.data,import_readiness:ir.data,database_first_analysis:true});
+    }
+    if(op==="preview_transaction_clarifications"){
+      reqFields(p,["workspace_id","clarifications"]);
+      const rows=p.clarifications as any[];
+      await assertIdsInWorkspace(db,"transactions",rows.map((x:any)=>x.transaction_id),p.workspace_id);
+      const ids=[...new Set(rows.map((x:any)=>String(x.transaction_id)))];
+      const q=await db.from("transactions").select("id,posted_date,amount,direction,raw_description,merchant_normalized,category,subcategory,purpose,normalized_values").eq("workspace_id",p.workspace_id).in("id",ids).is("deleted_at",null);
+      if(q.error)throw q.error;
+      const byId=new Map((q.data??[]).map((x:any)=>[String(x.id),x]));
+      const results=rows.map((r:any)=>{
+        const existing=byId.get(String(r.transaction_id));
+        const proposed={
+          ...existing,
+          merchant_normalized:r.merchant_normalized??existing?.merchant_normalized??null,
+          category:r.category??existing?.category??null,
+          subcategory:r.subcategory??existing?.subcategory??null,
+          purpose:r.purpose??existing?.purpose??null
+        };
+        return {transaction_id:r.transaction_id,existing,proposed,context_note:r.context_note??null,scope:r.scope??"transaction",difference:differences(existing??{},proposed)};
+      });
+      return respond({results,aliases:p.aliases??[],memories:p.memories??[],final_confirmation_required:true});
+    }
+    if(op==="commit_transaction_clarifications"){
+      reqFields(p,["workspace_id","clarifications","final_confirmation"]);
+      if(p.final_confirmation!==true)return respond({error:"Final user confirmation is required before saving transaction clarifications."},409);
+      const rows=p.clarifications as any[];
+      await assertIdsInWorkspace(db,"transactions",rows.map((x:any)=>x.transaction_id),p.workspace_id);
+      for(const r of rows)reqFields(r,["transaction_id","context_note"]);
+      const rpc=await db.rpc("financecanvas_commit_transaction_clarifications",{
+        p_workspace_id:p.workspace_id,
+        p_rows:rows,
+        p_aliases:p.aliases??[],
+        p_memories:p.memories??[]
+      });
+      if(rpc.error)throw rpc.error;
+      const ids=(rpc.data?.updated_transaction_ids??[]) as string[];
+      let transactions:any[]=[];
+      if(ids.length){
+        const q=await db.from("transactions").select("id,posted_date,amount,direction,raw_description,merchant_normalized,category,subcategory,purpose,normalized_values").eq("workspace_id",p.workspace_id).in("id",ids);
+        if(q.error)throw q.error;transactions=q.data??[];
+      }
+      return respond({committed:true,result:rpc.data,transactions,single_source_of_truth:true});
+    }
+    if(op==="enrich_transactions"){
+      reqFields(p,["workspace_id","transaction_ids"]);
+      const ids=[...new Set((p.transaction_ids as any[]).map(String))];
+      if(ids.length>1000)throw Object.assign(new Error("At most 1000 transactions can be enriched per request."),{status:422});
+      await assertIdsInWorkspace(db,"transactions",ids,p.workspace_id);
+      const q=await db.from("transactions").select("*").eq("workspace_id",p.workspace_id).in("id",ids).is("deleted_at",null);
+      if(q.error)throw q.error;
+      const overrides=new Map((p.overrides??[]).map((x:any)=>[String(x.transaction_id),x]));
+      const storedAliases=await loadMerchantAliases(db,p.workspace_id);
+      const updated:any[]=[];
+      for(const existing of q.data??[]){
+        // Explicitly clarified categories/purposes must use the preview/commit correction path.
+        if(existing.normalized_values?.financecanvas_clarification?.confirmed_by_user===true)continue;
+        const merged=autoEnrichTransaction(applyStoredMerchantAliases({...existing,...(overrides.get(String(existing.id))??{})},storedAliases));
+        const patch:any={};
+        for(const k of ["merchant_normalized","category","subcategory","purpose"]){
+          if(merged[k]!==undefined&&merged[k]!==null&&String(merged[k]).trim()!=="")patch[k]=merged[k];
+        }
+        if(merged.normalized_values)patch.normalized_values=merged.normalized_values;
+        if(Object.keys(patch).length){
+          const u=await db.from("transactions").update(patch).eq("workspace_id",p.workspace_id).eq("id",existing.id).select("id,raw_description,merchant_normalized,category,subcategory,purpose,normalized_values").single();
+          if(u.error)throw u.error; updated.push(u.data);
+        }
+      }
+      return respond({requested:ids.length,updated:updated.length,transactions:updated,database_source_only:true});
     }
     if(op==="search_transactions"){
-      reqFields(p,["workspace_id"]);let q=db.from("transactions").select("*").eq("workspace_id",p.workspace_id).is("deleted_at",null).order("posted_date",{ascending:false}).limit(Math.min(Number(p.limit??100),500));
+      reqFields(p,["workspace_id"]);
+      let q=db.from("transactions").select("*").eq("workspace_id",p.workspace_id).is("deleted_at",null).order("posted_date",{ascending:false}).limit(Math.min(Number(p.limit??100),1000));
       if(p.account_id)q=q.eq("account_id",p.account_id);if(p.profile_id)q=q.eq("profile_id",p.profile_id);if(p.from_date)q=q.gte("posted_date",p.from_date);if(p.to_date)q=q.lte("posted_date",p.to_date);if(p.category)q=q.eq("category",p.category);
-      const {data,error}=await q;if(error)throw error;return respond({transactions:data??[]});
+      const {data,error}=await q;if(error)throw error;
+      const rows=data??[];
+      const importIds=[...new Set(rows.map((x:any)=>x.import_id).filter(Boolean))];
+      let incomplete:any[]=[];
+      if(importIds.length){
+        const ir=await db.from("imports").select("id,original_filename,detected_document_type,analysis_ready,analysis_missing_fields").eq("workspace_id",p.workspace_id).in("id",importIds);
+        if(ir.error)throw ir.error;
+        incomplete=(ir.data??[]).filter((x:any)=>x.analysis_ready!==true);
+      }
+      return respond({transactions:rows,analysis_ready:incomplete.length===0,analysis_warnings:incomplete.length?[{code:"INCOMPLETE_IMPORT_ANALYSIS_DATA",message:"Some returned transactions came from imports that do not contain enough retained structured data for complete database-only category analysis.",imports:incomplete}]:[]});
     }
     if(op==="request_edit"){
       reqFields(p,["workspace_id","table","record_id","patch"]);if(!editable.has(String(p.table)))throw new Error("Table not editable through FinanceCanvas API");
@@ -454,7 +825,7 @@ Deno.serve(async(req:Request)=>{
       reqFields(p,["workspace_id","source_hash"]);
       const hash=String(p.source_hash).trim().toLowerCase();
       if(!/^[0-9a-f]{64}$/.test(hash)) throw new Error("source_hash must be a SHA-256 hex digest");
-      const r=await db.from("imports").select("id,account_id,profile_id,source_type,original_filename,statement_start,statement_end,status,record_count,reconciliation_status,created_at,committed_at,completed_at")
+      const r=await db.from("imports").select("id,account_id,profile_id,source_type,original_filename,statement_start,statement_end,status,record_count,reconciliation_status,created_at,committed_at,completed_at,analysis_ready,analysis_missing_fields,analysis_ready_at")
         .eq("workspace_id",p.workspace_id).eq("source_hash",hash).is("deleted_at",null).order("created_at",{ascending:false});
       if(r.error)throw r.error;
       return respond({duplicate_found:(r.data?.length??0)>0,matches:r.data??[]});
@@ -987,23 +1358,23 @@ Deno.serve(async(req:Request)=>{
       return respond({erased:true,workspace_id:p.workspace_id});
     }
     if(op==="export_workspace_json"){
-      reqFields(p,["workspace_id"]);const tables=["workspaces","profiles","institutions","accounts","imports","transactions","transaction_splits","merchant_aliases","loans","loan_payments","insurance_policies","assets","liabilities","investments","investment_transactions","subscriptions","goals","correction_memory","duplicate_reviews","audit_log","watch_rules","watch_findings","data_freshness","households","household_members","profile_relationships","asset_owners","liability_owners","loan_borrowers","account_balances","credit_card_statements","budgets","recurring_items","financial_snapshots","processing_consents","sensitive_data_events","privacy_requests","breach_incidents","extracted_fields","confirmation_queue","income_sources","insurance_premiums","financial_preferences","recommendations","investment_allocation_targets"], out:Record<string,any>={};
+      reqFields(p,["workspace_id"]);const tables=["workspaces","profiles","institutions","accounts","imports","transactions","transaction_splits","merchant_aliases","loans","loan_payments","insurance_policies","assets","liabilities","investments","investment_transactions","subscriptions","goals","correction_memory","duplicate_reviews","audit_log","watch_rules","watch_findings","data_freshness","households","household_members","profile_relationships","asset_owners","liability_owners","loan_borrowers","account_balances","credit_card_statements","budgets","recurring_items","financial_snapshots","processing_consents","sensitive_data_events","privacy_requests","breach_incidents","extracted_fields","confirmation_queue","income_sources","insurance_premiums","financial_preferences","recommendations","investment_allocation_targets","import_entities","income_payments","tax_records","transaction_clarifications"], out:Record<string,any>={};
       for(const table of tables){let q=db.from(table).select("*");q=table==="workspaces"?q.eq("id",p.workspace_id):q.eq("workspace_id",p.workspace_id);const r=await q;if(r.error)throw r.error;out[table]=r.data??[]}
       const owners=await db.from("account_owners").select("*,accounts!inner(workspace_id)").eq("accounts.workspace_id",p.workspace_id); if(owners.error) throw owners.error; out.account_owners=owners.data??[];
-      return respond({schema_version:"0.1.0",exported_at:new Date().toISOString(),workspace_id:p.workspace_id,data:out});
+      return respond({schema_version:"0.1.5",exported_at:new Date().toISOString(),workspace_id:p.workspace_id,data:out});
     }
     if(op==="export_workspace_csv"){
       reqFields(p,["workspace_id"]);
-      const tables=["profiles","institutions","accounts","imports","transactions","transaction_splits","merchant_aliases","loans","loan_payments","insurance_policies","assets","liabilities","investments","investment_transactions","subscriptions","goals","correction_memory","duplicate_reviews","audit_log","watch_rules","watch_findings","data_freshness","households","household_members","profile_relationships","asset_owners","liability_owners","loan_borrowers","account_balances","credit_card_statements","budgets","recurring_items","financial_snapshots","processing_consents","sensitive_data_events","privacy_requests","breach_incidents","extracted_fields","confirmation_queue","income_sources","insurance_premiums","financial_preferences","recommendations","investment_allocation_targets"];
+      const tables=["profiles","institutions","accounts","imports","transactions","transaction_splits","merchant_aliases","loans","loan_payments","insurance_policies","assets","liabilities","investments","investment_transactions","subscriptions","goals","correction_memory","duplicate_reviews","audit_log","watch_rules","watch_findings","data_freshness","households","household_members","profile_relationships","asset_owners","liability_owners","loan_borrowers","account_balances","credit_card_statements","budgets","recurring_items","financial_snapshots","processing_consents","sensitive_data_events","privacy_requests","breach_incidents","extracted_fields","confirmation_queue","income_sources","insurance_premiums","financial_preferences","recommendations","investment_allocation_targets","import_entities","income_payments","tax_records","transaction_clarifications"];
       const files:Record<string,string>={};
       const w=await db.from("workspaces").select("*").eq("id",p.workspace_id); if(w.error)throw w.error; files["workspaces.csv"]=rowsToCsv(w.data??[]);
       for(const table of tables){const r=await db.from(table).select("*").eq("workspace_id",p.workspace_id);if(r.error)throw r.error;files[table+".csv"]=rowsToCsv(r.data??[])}
       const owners=await db.from("account_owners").select("*,accounts!inner(workspace_id)").eq("accounts.workspace_id",p.workspace_id); if(owners.error)throw owners.error; files["account_owners.csv"]=rowsToCsv(owners.data??[]);
-      return respond({schema_version:"0.1.0",exported_at:new Date().toISOString(),workspace_id:p.workspace_id,files});
+      return respond({schema_version:"0.1.5",exported_at:new Date().toISOString(),workspace_id:p.workspace_id,files});
     }
     return respond({error:"Unknown operation: "+op},404);
   } catch(e){
     const status=Number((e as any)?.status??400);
-    return respond({error:(e as Error).message??String(e),code:(e as any)?.code??"REQUEST_REJECTED",field:(e as any)?.field??null},status>=400&&status<600?status:400);
+    return respond({error:(e as Error).message??String(e),code:(e as any)?.code??"REQUEST_REJECTED",field:(e as any)?.field??null,details:(e as any)?.details??null},status>=400&&status<600?status:400);
   }
 });

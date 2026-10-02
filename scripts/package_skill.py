@@ -18,6 +18,7 @@ ROOT_FILES = {
     "NOTICE",
     "README.md",
     "SECURITY.md",
+    "SECURITY_CHECKLIST.md",
     "COMPLIANCE.md",
     "PRIVACY.md",
     "DATA_RETENTION.md",

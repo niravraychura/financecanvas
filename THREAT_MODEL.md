@@ -63,3 +63,7 @@ FinanceCanvas does not act as a payment service and must stay within documented 
 - AI extraction and anomaly detection can be wrong.
 - An owner with Supabase admin access can intentionally bypass application controls.
 - No application is breach-proof; incident-response procedures remain necessary.
+
+### Lost or overgeneralized classification context
+
+Retain sanitized transaction narration for database-only analysis. Store historical clarifications separately from reusable aliases, require final user authorization, scope all corrections to a workspace, and preserve confirmed classifications during enrichment. Private connector adapters are owner-only and must not be exposed as public client operations.

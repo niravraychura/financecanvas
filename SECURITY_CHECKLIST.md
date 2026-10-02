@@ -104,3 +104,12 @@ For Skill behavior, database, API, authentication, import, alert, privacy, or fi
 - [ ] Source hashes are either null or lowercase 64-character SHA-256 hex.
 - [ ] Fields named `identifier_last4` / `policy_identifier_last4` cannot exceed four characters.
 - [ ] Child financial records cannot reference a parent/transaction/import from another workspace.
+
+## Database analysis / clarification updates
+- [ ] Missing statement narration is rejected at the database commit boundary.
+- [ ] Clarification commits preserve canonical fields, explanation, reusable memory and audit atomically.
+- [ ] Connector clarification routines are revoked from PUBLIC/anon/authenticated.
+- [ ] Privacy and cross-workspace correction checks pass using synthetic data.
+- [ ] Saved aliases do not overwrite user-confirmed categories or overgeneralize person/month-specific context.
+- [ ] Reinstall packages contain the API source, new migrations and upgrade instructions.
+- [ ] Live migration equivalents are reconciled before any database upgrade; existing data is never reset.

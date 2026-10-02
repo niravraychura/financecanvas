@@ -568,6 +568,15 @@ No synthetic acceptance workspace or test runtime key is retained after cleanup.
 
 ## Updating
 
+The 0.1.5 Skill bundles API v17, database-only transaction analysis and permanent clarification workflows. Reinstall the latest Skill with:
+
+```bash
+npx --yes --prefer-online github:niravraychura/financecanvas#main
+```
+
+Then say: "Initialize FinanceCanvas using my existing Supabase project. Check the schema and apply only missing FinanceCanvas upgrades; preserve all existing data." Skill installation copies code/instructions; it does not reset, migrate or replace your database automatically. See [references/UPGRADING.md](references/UPGRADING.md).
+
+
 Before applying an update:
 
 1. review [CHANGELOG.md](CHANGELOG.md);

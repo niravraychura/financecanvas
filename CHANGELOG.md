@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.5
+
+- Captured the deployed API v17 and six database-analysis/repair/clarification migrations in source control
+- Retained sanitized narration and database import-readiness reporting
+- Added permanent transaction clarifications, scoped correction memory and reusable merchant aliases
+- Added private connector preview/commit clarification adapters and stored-alias resolution for Codex
+- Restored entity, salary and tax API access/export coverage
+- Added data-preserving reinstall/upgrade guidance and install/migration regression coverage
+
+
 ## 0.1.3
 
 - Extended BYO-Supabase connector imports beyond bank/credit-card transactions

@@ -86,3 +86,11 @@ npx --yes github:niravraychura/financecanvas --uninstall
 You normally do not need to clone the repository just to install the Skill.
 
 For Supabase CLI deployment, external API clients, acceptance testing, or contributor setup, see [ADVANCED_SETUP.md](ADVANCED_SETUP.md).
+
+## Reinstalling the updated Skill
+
+```bash
+npx --yes --prefer-online github:niravraychura/financecanvas#main
+```
+
+Use your existing project/workspace during initialization. Follow [references/UPGRADING.md](references/UPGRADING.md) for missing database migrations; reinstalling the Skill does not erase or migrate data.
