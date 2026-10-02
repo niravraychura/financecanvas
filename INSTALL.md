@@ -5,12 +5,23 @@
 Install FinanceCanvas globally into all Agent-Skills-compatible local agents detected on your machine:
 
 ```bash
-npx skills add niravraychura/financecanvas --all -g
+npx --yes github:niravraychura/financecanvas
 ```
 
 That is the recommended install command.
 
-It works with Agent Skills hosts supported by the `skills` CLI, including Claude Code, Cursor, Codex and many others.
+It installs FinanceCanvas into:
+- the universal Agent Skills directory;
+- Claude Code;
+- Cursor;
+- OpenAI Codex;
+- Gemini CLI.
+
+Alternative using the open Agent Skills CLI:
+
+```bash
+npx skills add niravraychura/financecanvas --all -g -y
+```
 
 After installation, start your AI agent and say:
 
@@ -44,14 +55,16 @@ dist/financecanvas.zip
 
 ## Update
 
+Run the same install command again:
+
 ```bash
-npx skills update -g
+npx --yes github:niravraychura/financecanvas
 ```
 
 ## Remove
 
 ```bash
-npx skills remove financecanvas -g
+npx --yes github:niravraychura/financecanvas --uninstall
 ```
 
 ## Advanced/self-hosted setup
