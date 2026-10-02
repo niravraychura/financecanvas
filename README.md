@@ -21,7 +21,7 @@ FinanceCanvas follows the open Agent Skills format and is intended to be portabl
 - Cursor
 - other Agent-Skills-compatible agents supported by the `skills` CLI
 
-The persistent data layer is optional and can use an authorized Supabase connector or the restricted FinanceCanvas API.
+The persistent data layer is optional and **bring-your-own-Supabase**: each user can connect/select their own Supabase project. FinanceCanvas does not require users to share the author's database.
 
 ---
 
@@ -193,34 +193,41 @@ Scenario values remain separate from confirmed records.
 
 ## Architecture
 
+FinanceCanvas is **not a centrally hosted finance database**. Each user can bring their own Supabase project:
+
 ```text
-                Owner / Developer
-                       |
-             Authorized Supabase connector
-              (maintenance / deployment)
-                       |
-                       v
-+------------------------------------------------+
-|                 Supabase project               |
-|                                                |
-|  Edge Function: financecanvas-api              |
-|             |                                  |
-|             v                                  |
-|  PostgreSQL structured financial data          |
-|  + RLS enabled                                 |
-|  + direct anon/authenticated DML revoked       |
-+------------------------------------------------+
-                       ^
-                       |
-          restricted approved operations
-                       |
-               FinanceCanvas Skill
-                       ^
-                       |
-          ChatGPT / compatible AI / client
+User A + FinanceCanvas → User A's Supabase project
+User B + FinanceCanvas → User B's Supabase project
+User C + FinanceCanvas → User C's Supabase project
 ```
 
+With an authorized Supabase connector:
+
+```text
+AI host / FinanceCanvas Skill
+            |
+            | user's authorized Supabase connector
+            v
++------------------------------------------------+
+|         User-selected Supabase project         |
+|                                                |
+|  financecanvas_private connector helpers       |
+|  PostgreSQL structured FinanceCanvas data      |
+|  + RLS enabled                                 |
+|  + direct anon/authenticated DML revoked       |
+|                                                |
+|  Optional: financecanvas-api Edge Function     |
+|  for external/non-connector runtimes           |
++------------------------------------------------+
+```
+
+No Supabase project reference, URL, organization ID, service key, or author-owned project is hardcoded into the Skill.
+
 ### Important trust boundary
+
+An authorized Supabase owner connector can be used as the personal/private FinanceCanvas data path when it follows [references/CONNECTOR_MODE.md](references/CONNECTOR_MODE.md). The restricted Edge Function remains available for external clients that do not have an authorized connector.
+
+A Supabase admin connector is powerful, so normal connector-mode operations are limited to the approved FinanceCanvas tables/functions and confirmation rules. It must never touch unrelated application data merely because the connector has access.
 
 An owner/developer Supabase admin connector is useful for installation and maintenance, but it can execute privileged database operations.
 
