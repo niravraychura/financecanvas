@@ -32,7 +32,7 @@ security invoker
 set search_path = pg_catalog, public, financecanvas_private
 as $$
   select encode(
-    digest(
+    extensions.digest(
       concat_ws(
         E'\x1f',
         p_workspace_id::text,
@@ -378,7 +378,7 @@ begin
         'raw_description',t.raw_description,'transaction_reference',t.transaction_reference,
         'category',t.category,'subcategory',t.subcategory,'profile_id',t.profile_id,
         'account_id',t.account_id,
-        'similarity',similarity(
+        'similarity',extensions.similarity(
           financecanvas_private.norm_text(coalesce(t.merchant_normalized,t.raw_description,'')),
           v_compare_text
         )
@@ -391,7 +391,7 @@ begin
         and upper(t.currency)=v_currency
         and lower(t.direction)=v_direction
         and t.posted_date between (v_date-3) and (v_date+3)
-        and similarity(
+        and extensions.similarity(
           financecanvas_private.norm_text(coalesce(t.merchant_normalized,t.raw_description,'')),
           v_compare_text
         )>=0.5
@@ -620,7 +620,7 @@ begin
       v_duplicate_of := v_existing.id;
       v_override_reason := btrim(v_resolution->>'reason');
       v_final_fingerprint := encode(
-        digest(v_fingerprint||'|override|'||v_override_reason||'|'||gen_random_uuid()::text,'sha256'),
+        extensions.digest(v_fingerprint||'|override|'||v_override_reason||'|'||gen_random_uuid()::text,'sha256'),
         'hex'
       );
 
@@ -649,7 +649,7 @@ begin
         and upper(t.currency)=v_currency
         and lower(t.direction)=v_direction
         and t.posted_date between (v_date-3) and (v_date+3)
-        and similarity(
+        and extensions.similarity(
           financecanvas_private.norm_text(coalesce(t.merchant_normalized,t.raw_description,'')),
           v_compare_text
         )>=0.5
@@ -714,7 +714,7 @@ begin
         v_duplicate_of := v_near.id;
         v_override_reason := btrim(v_resolution->>'reason');
         v_final_fingerprint := encode(
-          digest(v_fingerprint||'|override|'||v_override_reason||'|'||gen_random_uuid()::text,'sha256'),
+          extensions.digest(v_fingerprint||'|override|'||v_override_reason||'|'||gen_random_uuid()::text,'sha256'),
           'hex'
         );
 
