@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.3
+
+- Extended BYO-Supabase connector imports beyond bank/credit-card transactions
+- Added controlled imports for insurance policies, loans, portfolio/holding records, income sources, assets, liabilities, subscriptions, goals and recurring items
+- Added child/history import support for insurance premiums, loan payments and investment events
+- Added salary/pay-slip import with dated income-payment history
+- Added minimized tax-summary/return import without PAN/Aadhaar/passport/tax identifiers
+- Added field-level changed-existing preview and explicit Keep / Update / Add-separate decisions with reasons
+- Added atomic structured-document import evidence links through `import_entities`
+- Added source-hash format enforcement and last-four identifier constraints
+- Added cross-workspace child-record guards
+- Added acceptance coverage for all supported non-transaction financial document classes
+
 ## 0.1.2
 
 - Added connector-native statement account resolution, duplicate preview and atomic import for Codex/Claude/Cursor environments with authorized Supabase connectors
