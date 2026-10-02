@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.2
+
+- Added connector-native statement account resolution, duplicate preview and atomic import for Codex/Claude/Cursor environments with authorized Supabase connectors
+- Ordinary statement data (name, masked identifiers, transactions, balances, limits, due dates, totals and rewards) is now explicitly classified as private-but-importable rather than import-blocking
+- Critical secrets and full high-risk identifiers remain blocked/minimized
+- Connector imports now create structured import/card-statement metadata while never storing the source PDF
+- Added commit-time duplicate recheck and source-document hash protection for connector mode
+- Added Base64 guidance for safely passing untrusted extracted JSON through SQL-only connectors
+- Added database-side masked/full-card privacy enforcement for connector imports
+
 ## 0.1.1
 
 - Fixed Codex/connector initialization when the FinanceCanvas HTTP operation is not exposed as a tool
